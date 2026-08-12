@@ -1,0 +1,354 @@
+import { FormEvent, useEffect, useMemo, useState } from "react";
+
+type View = "home" | "articles" | "notes" | "gallery" | "studio" | "guestbook";
+type ApiState = "checking" | "online" | "offline";
+
+type Article = {
+  title: string;
+  category: string;
+  series: string;
+  date: string;
+  readTime: string;
+  excerpt: string;
+};
+
+type Creation = {
+  title: string;
+  type: string;
+  state: string;
+  description: string;
+  image: string;
+  accent: string;
+};
+
+type GuestbookComment = {
+  name: string;
+  body: string;
+  date: string;
+  color: string;
+};
+
+const noteColors = ["ice", "mint", "lavender", "rose"] as const;
+type NoteColor = typeof noteColors[number];
+
+const mockGuestbookComments: GuestbookComment[] = [
+  { name: "林川", body: "JUC 基础系列讲得很清楚，期待线程池这一篇的完整整理。", date: "今天 10:24", color: "ice" },
+  { name: "Mia", body: "图库的视觉统一得很好，首页背景和头像的组合很有辨识度。", date: "昨天 21:08", color: "rose" },
+  { name: "陈默", body: "刚看完 CompletableFuture 的文章，异常处理部分正好解决了我的疑问。", date: "昨天 15:42", color: "mint" },
+  { name: "Yuki", body: "创作中心的项目展示很干净，想看看 Prompt Garden 的后续版本。", date: "08.10", color: "lavender" },
+  { name: "阿北", body: "文章分类很明确，查找 JUC 相关内容非常方便。", date: "08.09", color: "ice" },
+  { name: "Kris", body: "留言墙这个形式不错，内容多起来以后会很有社区感。", date: "08.09", color: "mint" },
+  { name: "苏杭", body: "期待更多工程实践主题，尤其是服务稳定性和并发排查。", date: "08.08", color: "rose" },
+  { name: "Nora", body: "作品的配色和排版很舒服，已收藏。", date: "08.08", color: "lavender" },
+  { name: "程远", body: "希望后面能增加文章目录和代码片段复制功能。", date: "08.07", color: "ice" },
+  { name: "Dawn", body: "从技术文章到 AI 创作，内容方向很完整。", date: "08.06", color: "mint" },
+];
+
+const noteLayouts = [
+  { x: "3%", y: "7%", tilt: -3.1, z: 5 },
+  { x: "25%", y: "3%", tilt: 2.4, z: 8 },
+  { x: "50%", y: "9%", tilt: -1.8, z: 4 },
+  { x: "74%", y: "4%", tilt: 3.2, z: 7 },
+  { x: "10%", y: "39%", tilt: 1.2, z: 9 },
+  { x: "34%", y: "32%", tilt: -2.7, z: 6 },
+  { x: "59%", y: "43%", tilt: 2.1, z: 10 },
+  { x: "76%", y: "33%", tilt: -1.4, z: 3 },
+  { x: "20%", y: "67%", tilt: 3.4, z: 2 },
+  { x: "48%", y: "64%", tilt: -2.2, z: 11 },
+  { x: "69%", y: "67%", tilt: 1.7, z: 1 },
+  { x: "4%", y: "68%", tilt: -1.1, z: 12 },
+];
+
+function getNoteLayout(index: number) {
+  const layer = Math.floor(index / noteLayouts.length);
+  const layout = noteLayouts[index % noteLayouts.length];
+
+  return {
+    ...layout,
+    y: `calc(${layout.y} + ${layer * 180}px)`,
+    z: layout.z + layer * noteLayouts.length,
+  };
+}
+
+const articles: Article[] = [
+  {
+    title: "从可见性到有序性：并发编程的第一性原理",
+    category: "Java 并发编程",
+    series: "JUC 基础",
+    date: "2026.08.08",
+    readTime: "12 min",
+    excerpt: "梳理 happens-before、锁和原子性的关系，说明 Java 线程安全的核心约束。",
+  },
+  {
+    title: "一张图读懂 Java 线程池的生命周期",
+    category: "Java 并发编程",
+    series: "JUC 基础",
+    date: "2026.08.01",
+    readTime: "9 min",
+    excerpt: "从任务提交到 Worker 退出，记录 ThreadPoolExecutor 最容易被忽略的状态变化。",
+  },
+  {
+    title: "用 CompletableFuture 编排一次可靠的异步流程",
+    category: "Java 并发编程",
+    series: "异步工具箱",
+    date: "2026.07.22",
+    readTime: "15 min",
+    excerpt: "并行、超时、降级和异常恢复，组合成可以在生产环境里落地的异步代码。",
+  },
+  {
+    title: "从 Redis 分布式锁想到的几个边界问题",
+    category: "后端实践",
+    series: "系统设计",
+    date: "2026.07.14",
+    readTime: "11 min",
+    excerpt: "锁住的到底是什么？从租约、时钟漂移到 fencing token，重新审视分布式锁。",
+  },
+];
+
+const creations: Creation[] = [
+  {
+    title: "Neon Archive",
+    type: "AI 视觉实验",
+    state: "展出中",
+    description: "以城市夜景为主题的 AI 生成图像系列。",
+    image: "https://images.unsplash.com/photo-1519608487953-e999c86e7455?auto=format&fit=crop&w=1200&q=85",
+    accent: "#ffffff",
+  },
+  {
+    title: "Prompt Garden",
+    type: "AI 编程作品",
+    state: "迭代中",
+    description: "用于管理提示词、版本记录和项目素材的交互式工具。",
+    image: "https://images.unsplash.com/photo-1518709268805-4e9042af9f23?auto=format&fit=crop&w=1200&q=85",
+    accent: "#7b9d82",
+  },
+  {
+    title: "Quiet Machines",
+    type: "交互原型",
+    state: "已归档",
+    description: "一场关于自动化和人类注意力的黑白界面练习。",
+    image: "https://images.unsplash.com/photo-1535378917042-10a22c95931a?auto=format&fit=crop&w=1200&q=85",
+    accent: "#8a9aa5",
+  },
+];
+
+const notes = [
+  { date: "08.11", title: "并发学习方法", body: "先识别共享状态和状态转换，再选择并发控制方案。" },
+  { date: "08.06", title: "Prompt Garden 交互调整", body: "完成项目工作区的配色和信息层级优化。" },
+  { date: "07.29", title: "《置身事内》阅读摘要", body: "整理地方经济运行机制及其与具体决策之间的关系。" },
+];
+
+const categories = ["全部文章", "JUC 基础", "异步工具箱", "系统设计"];
+
+function App() {
+  const [view, setView] = useState<View>("home");
+  const [apiState, setApiState] = useState<ApiState>("checking");
+  const [developerToolsOpen, setDeveloperToolsOpen] = useState(false);
+  const [copyNoticeVisible, setCopyNoticeVisible] = useState(false);
+  const [activeCategory, setActiveCategory] = useState("全部文章");
+  const [selectedArticle, setSelectedArticle] = useState<Article | null>(null);
+  const [selectedCreation, setSelectedCreation] = useState<Creation | null>(null);
+  const [message, setMessage] = useState("");
+  const [visitor, setVisitor] = useState("");
+  const [comments, setComments] = useState<GuestbookComment[]>(() => {
+    try {
+      const storedComments = JSON.parse(localStorage.getItem("alex-guestbook") || "[]") as Partial<GuestbookComment>[];
+      return storedComments.map((comment, index) => ({
+        name: comment.name || "匿名访客",
+        body: comment.body || "",
+        date: comment.date || "刚刚",
+        color: noteColors[index % noteColors.length],
+      }));
+    } catch {
+      return [];
+    }
+  });
+
+  useEffect(() => {
+    fetch("/api/health")
+      .then((response) => {
+        if (!response.ok) throw new Error("API request failed");
+        setApiState("online");
+      })
+      .catch(() => setApiState("offline"));
+  }, []);
+
+  useEffect(() => {
+    let hideCopyNotice: number | undefined;
+
+    const showCopyNotice = () => {
+      setCopyNoticeVisible(true);
+      window.clearTimeout(hideCopyNotice);
+      hideCopyNotice = window.setTimeout(() => setCopyNoticeVisible(false), 3000);
+    };
+
+    document.addEventListener("copy", showCopyNotice);
+    return () => {
+      document.removeEventListener("copy", showCopyNotice);
+      window.clearTimeout(hideCopyNotice);
+    };
+  }, []);
+
+  useEffect(() => {
+    const detectDeveloperTools = () => {
+      const widthDifference = window.outerWidth - window.innerWidth;
+      const heightDifference = window.outerHeight - window.innerHeight;
+      setDeveloperToolsOpen(widthDifference > 180 || heightDifference > 180);
+    };
+
+    detectDeveloperTools();
+    window.addEventListener("resize", detectDeveloperTools);
+    return () => window.removeEventListener("resize", detectDeveloperTools);
+  }, []);
+
+  const filteredArticles = useMemo(
+    () => activeCategory === "全部文章" ? articles : articles.filter((article) => article.series === activeCategory),
+    [activeCategory],
+  );
+
+  function navigate(nextView: View) {
+    setView(nextView);
+    setSelectedArticle(null);
+    setSelectedCreation(null);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  function submitMessage(event: FormEvent<HTMLFormElement>, color: NoteColor) {
+    event.preventDefault();
+    if (!message.trim() || !visitor.trim()) return;
+    const next = [{ name: visitor.trim(), body: message.trim(), date: "刚刚", color }, ...comments];
+    setComments(next);
+    localStorage.setItem("alex-guestbook", JSON.stringify(next));
+    setMessage("");
+    setVisitor("");
+  }
+
+  const viewTitle: Record<View, string> = {
+    home: "个人技术与创作档案",
+    articles: "技术文章",
+    notes: "日常笔记",
+    gallery: "AI 创作图库",
+    studio: "AI 编程项目",
+    guestbook: "访客留言",
+  };
+
+  return (
+    <main className={`app-shell${view === "home" ? " home-shell" : ""}${view === "guestbook" ? " guestbook-shell" : ""}`}>
+      {(copyNoticeVisible || developerToolsOpen) && <div className="developer-tools-notice" role="status">{copyNoticeVisible ? "复制已完成，转载请标明出处" : "开发者模式已打开，请遵循 GPL 协议"}</div>}
+      <header className="site-header">
+        <button className="brand" onClick={() => navigate("home")} aria-label="返回首页">
+          <span className="brand-mark">A</span>
+          <span>ALEX / WORKS</span>
+        </button>
+        <nav className="main-nav" aria-label="主导航">
+          <button className={view === "home" ? "active" : ""} onClick={() => navigate("home")}>主页</button>
+          <button className={view === "articles" ? "active" : ""} onClick={() => navigate("articles")}>文章</button>
+          <button className={view === "notes" ? "active" : ""} onClick={() => navigate("notes")}>笔记</button>
+          <button className={view === "gallery" ? "active" : ""} onClick={() => navigate("gallery")}>创作图库</button>
+          <button className={view === "studio" ? "active" : ""} onClick={() => navigate("studio")}>创作中心</button>
+          <button className={view === "guestbook" ? "active" : ""} onClick={() => navigate("guestbook")}>留言板</button>
+        </nav>
+        <span className={`api-pill api-pill-${apiState}`}><span />{apiState === "online" ? "在线" : apiState === "offline" ? "离线 Demo" : "连接中"}</span>
+      </header>
+
+      {view !== "home" && view !== "guestbook" && <section className="page-intro">
+        <h1>{viewTitle[view]}</h1>
+        <p className="intro-copy">汇集 Java 技术文章、阅读笔记、AI 图像作品和 AI 编程项目。</p>
+      </section>}
+
+      {view === "home" && <Home navigate={navigate} setSelectedCreation={setSelectedCreation} setSelectedArticle={setSelectedArticle} />}
+      {view === "articles" && (
+        <Articles activeCategory={activeCategory} setActiveCategory={setActiveCategory} filteredArticles={filteredArticles} setSelectedArticle={setSelectedArticle} />
+      )}
+      {view === "notes" && <Notes />}
+      {view === "gallery" && <Gallery creations={creations} setSelectedCreation={setSelectedCreation} />}
+      {view === "studio" && <Studio creations={creations} setSelectedCreation={setSelectedCreation} />}
+      {view === "guestbook" && <Guestbook visitor={visitor} message={message} setVisitor={setVisitor} setMessage={setMessage} comments={comments} submitMessage={submitMessage} />}
+
+      {selectedArticle && <ArticleDrawer article={selectedArticle} close={() => setSelectedArticle(null)} />}
+      {selectedCreation && <CreationDrawer creation={selectedCreation} close={() => setSelectedCreation(null)} />}
+
+      <footer className="site-footer">
+        <div className="footer-primary"><strong>NextAlex</strong><span>© {new Date().getFullYear()} NextAlex. All rights reserved.</span></div>
+        <div className="footer-meta"><span>Version 0.1.0</span><span>React · Gin · PostgreSQL</span></div>
+        <div className="footer-compliance"><span>ICP备案信息待配置</span><span>公安网备信息待配置</span></div>
+      </footer>
+    </main>
+  );
+}
+
+function Home({ navigate, setSelectedCreation, setSelectedArticle }: { navigate: (view: View) => void; setSelectedCreation: (creation: Creation) => void; setSelectedArticle: (article: Article) => void }) {
+  const profileName = "NextAlex";
+  const [displayedName, setDisplayedName] = useState("");
+
+  useEffect(() => {
+    let nextCharacter = 0;
+    const timer = window.setInterval(() => {
+      nextCharacter += 1;
+      setDisplayedName(profileName.slice(0, nextCharacter));
+      if (nextCharacter === profileName.length) window.clearInterval(timer);
+    }, 180);
+
+    return () => window.clearInterval(timer);
+  }, []);
+
+  return (
+    <>
+      <div className="home-background" aria-hidden="true" />
+      <div className="home-canvas">
+      <section className="home-hero">
+        <div className="home-hero-inner">
+          <div className="hero-content">
+            <div className="profile-identity">
+              <img className="profile-avatar" src="/avatar.jpg" alt="NextAlex 的头像" />
+              <div className="profile-copy">
+                <p className="profile-name" aria-label={profileName}>{displayedName}<span className="typing-caret" aria-hidden="true" /></p>
+                <h1>技术开发与 AI 创作</h1>
+                <p>专注 Java 并发编程、后端工程实践、AI 图像创作与 AI 编程项目。</p>
+                <div className="profile-links"><button onClick={() => navigate("articles")}>技术文章</button><i /><button onClick={() => navigate("gallery")}>创作图库</button><i /><button onClick={() => navigate("studio")}>创作中心</button></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+      <section className="recent-section home-content">
+        <div className="section-heading"><div><h2>近期文章</h2></div><button className="text-action" onClick={() => navigate("articles")}>全部文章 <span>↗</span></button></div>
+        <div className="recent-list">{articles.slice(0, 3).map((article, index) => <button className="recent-article" key={article.title} onClick={() => setSelectedArticle(article)}><span className="recent-index">0{index + 1}</span><div><p>{article.category} / {article.series}</p><h3>{article.title}</h3><span>{article.excerpt}</span></div><aside><time>{article.date}</time><small>{article.readTime}</small><b>↗</b></aside></button>)}</div>
+      </section>
+      <section className="home-lower home-content">
+        <div><div className="section-heading compact"><div><h2>创作项目</h2></div><button className="text-action" onClick={() => navigate("studio")}>进入创作中心 <span>↗</span></button></div><div className="creation-strip">{creations.slice(1, 3).map((creation) => <button className="creation-card" key={creation.title} onClick={() => setSelectedCreation(creation)}><img src={creation.image} alt={creation.title} /><span className="creation-meta"><strong>{creation.title}</strong><small>{creation.type} · {creation.state}</small></span></button>)}</div></div>
+        <aside className="guestbook-tease"><h2>笔记与留言</h2><p>查看最新笔记，或提交对文章和创作项目的反馈。</p><div className="tease-actions"><button className="outline-action" onClick={() => navigate("notes")}>查看笔记</button><button className="outline-action" onClick={() => navigate("guestbook")}>进入留言板</button></div></aside>
+      </section>
+      </div>
+    </>
+  );
+}
+
+function Articles({ activeCategory, setActiveCategory, filteredArticles, setSelectedArticle }: { activeCategory: string; setActiveCategory: (category: string) => void; filteredArticles: Article[]; setSelectedArticle: (article: Article) => void }) {
+  return <section className="content-band"><div className="filter-row">{categories.map((category) => <button key={category} className={activeCategory === category ? "filter-active" : ""} onClick={() => setActiveCategory(category)}>{category}</button>)}</div><div className="article-list">{filteredArticles.map((article, index) => <button className="article-row" key={article.title} onClick={() => setSelectedArticle(article)}><span className="article-number">{String(index + 1).padStart(2, "0")}</span><div className="article-main"><p>{article.category} / {article.series}</p><h2>{article.title}</h2><span>{article.excerpt}</span></div><div className="article-date"><time>{article.date}</time><small>{article.readTime}</small><b>↗</b></div></button>)}</div></section>;
+}
+
+function Notes() {
+  return <section className="content-band notes-layout"><div className="notes-list">{notes.map((note) => <article className="note-entry" key={note.title}><time>{note.date} / 2026</time><h2>{note.title}</h2><p>{note.body}</p></article>)}</div><aside className="side-note"><p>用于记录学习摘要、项目更新和阅读记录。内容按时间顺序归档。</p></aside></section>;
+}
+
+function Gallery({ creations, setSelectedCreation }: { creations: Creation[]; setSelectedCreation: (creation: Creation) => void }) {
+  return <section className="content-band"><div className="gallery-head"><p>展示 AI 生成图像、视觉研究和界面设计作品，按项目归档。</p><span>03 PROJECTS</span></div><div className="gallery-grid">{creations.map((creation) => <button className="gallery-card" key={creation.title} onClick={() => setSelectedCreation(creation)}><img src={creation.image} alt={creation.title} /><div><span>{creation.type}</span><h2>{creation.title}</h2><p>{creation.description}</p></div></button>)}</div></section>;
+}
+
+function Studio({ creations, setSelectedCreation }: { creations: Creation[]; setSelectedCreation: (creation: Creation) => void }) {
+  return <section className="content-band studio-layout"><div className="studio-intro"><h2>AI 编程项目管理</h2><p>展示项目进度、作品类型和项目简介，后续将接入版本记录与项目详情。</p><button className="outline-action" onClick={() => setSelectedCreation(creations[1])}>查看最近项目</button></div><div className="project-list">{creations.map((creation, index) => <button className="project-row" key={creation.title} onClick={() => setSelectedCreation(creation)}><span>0{index + 1}</span><div><h3>{creation.title}</h3><p>{creation.type}</p></div><b style={{ color: creation.accent }}>{creation.state}</b><strong>↗</strong></button>)}</div></section>;
+}
+
+function Guestbook({ visitor, message, setVisitor, setMessage, comments, submitMessage }: { visitor: string; message: string; setVisitor: (value: string) => void; setMessage: (value: string) => void; comments: GuestbookComment[]; submitMessage: (event: FormEvent<HTMLFormElement>, color: NoteColor) => void }) {
+  const [selectedColor, setSelectedColor] = useState<NoteColor>("ice");
+  const visibleComments = comments.length > 0 ? comments : mockGuestbookComments;
+  const boardHeight = 690 + Math.max(0, Math.ceil(visibleComments.length / noteLayouts.length) - 1) * 180;
+
+  return <section className="guestbook-wall"><div className="guestbook-canvas"><div className="note-board" aria-live="polite" style={{ "--note-board-height": `${boardHeight}px` } as React.CSSProperties}>{visibleComments.map((comment, index) => { const layout = getNoteLayout(index); return <article className={`visitor-note visitor-note-${comment.color}`} key={`${comment.name}-${index}`} style={{ "--note-x": layout.x, "--note-y": layout.y, "--note-tilt": `${layout.tilt}deg`, "--note-z": layout.z, "--note-delay": `${index * 55}ms` } as React.CSSProperties}><div className="visitor-note-top"><span className="note-pins"><i /><i /><i /></span><time>{comment.date}</time></div><p>{comment.body}</p><footer>{comment.name}</footer></article>; })}</div></div><section className="guestbook-editor"><form className="message-form guestbook-editor-form" onSubmit={(event) => submitMessage(event, selectedColor)}><h2>发布留言</h2><label>姓名或昵称<input value={visitor} onChange={(event) => setVisitor(event.target.value)} placeholder="请输入姓名或昵称" maxLength={20} required /></label><label>留言内容<textarea value={message} onChange={(event) => setMessage(event.target.value)} placeholder="请输入留言内容" maxLength={160} rows={5} required /></label><div className="note-color-picker" aria-label="便签颜色">{noteColors.map((color) => <button key={color} type="button" className={`note-color note-color-${color}${selectedColor === color ? " selected" : ""}`} onClick={() => setSelectedColor(color)} aria-label={`选择${color}颜色`} />)}</div><div className="message-form-footer"><span>{message.length}/160</span><button className="solid-action" type="submit">发布便签 <span>↗</span></button></div></form></section></section>;
+}
+
+function ArticleDrawer({ article, close }: { article: Article; close: () => void }) { return <div className="drawer-backdrop" onClick={close}><article className="drawer" onClick={(event) => event.stopPropagation()}><button className="close-button" onClick={close} aria-label="关闭">×</button><p className="section-kicker">{article.category} / {article.series}</p><h2>{article.title}</h2><time>{article.date} · {article.readTime}</time><p className="drawer-copy">{article.excerpt}</p><div className="demo-callout">文章正文将在后端接入后从 Markdown 内容加载。</div></article></div>; }
+function CreationDrawer({ creation, close }: { creation: Creation; close: () => void }) { return <div className="drawer-backdrop" onClick={close}><article className="drawer creation-drawer" onClick={(event) => event.stopPropagation()}><button className="close-button" onClick={close} aria-label="关闭">×</button><img src={creation.image} alt={creation.title} /><p className="section-kicker">{creation.type} / {creation.state}</p><h2>{creation.title}</h2><p className="drawer-copy">{creation.description}</p><div className="demo-callout">作品详情、Prompt 和版本记录将在创作中心 API 接入后开放。</div></article></div>; }
+
+export default App;

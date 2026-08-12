@@ -1,0 +1,16 @@
+.env
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+
+# Go
+backend/bin/
+backend/tmp/
+backend/vendor/
+
+# Local database backups and editor files
+database/backups/
+.idea/
+.vscode/
+*.log
