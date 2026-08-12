@@ -1,4 +1,5 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
@@ -13,6 +14,21 @@ type Article = {
   readTime: string;
   excerpt: string;
   content: string;
+};
+
+type ArticleHeading = {
+  id: string;
+  title: string;
+  level: 1 | 2 | 3;
+};
+
+type ViewTransitionDocument = Document & {
+  startViewTransition?: (update: () => void) => ViewTransitionHandle;
+};
+
+type ViewTransitionHandle = {
+  finished: Promise<void>;
+  skipTransition?: () => void;
 };
 
 type Creation = {
@@ -33,6 +49,128 @@ type GuestbookComment = {
 
 const noteColors = ["ice", "mint", "lavender", "rose"] as const;
 type NoteColor = typeof noteColors[number];
+
+const prefersReducedMotion = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+const focusableSelector = "a[href], button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex='-1'])";
+let pageTransitionSequence = 0;
+let activePageTransition: ViewTransitionHandle | null = null;
+
+function trapModalFocus(event: KeyboardEvent, container: HTMLElement) {
+  if (event.key !== "Tab") return;
+  const focusable = Array.from(container.querySelectorAll<HTMLElement>(focusableSelector)).filter((element) => {
+    const style = window.getComputedStyle(element);
+    return element.tabIndex >= 0 && element.getClientRects().length > 0 && style.display !== "none" && style.visibility !== "hidden" && !element.closest("[aria-hidden='true']");
+  });
+  if (focusable.length === 0) {
+    event.preventDefault();
+    container.focus({ preventScroll: true });
+    return;
+  }
+
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  const active = document.activeElement;
+  if (event.shiftKey && (active === first || !container.contains(active))) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && (active === last || !container.contains(active))) {
+    event.preventDefault();
+    first.focus();
+  }
+}
+
+function hideModalSiblings(modal: HTMLElement) {
+  const siblings = Array.from(modal.parentElement?.children || []).filter((element): element is HTMLElement => element instanceof HTMLElement && element !== modal);
+  const previousState = siblings.map((element) => ({ element, inert: element.inert, ariaHidden: element.getAttribute("aria-hidden") }));
+  previousState.forEach(({ element }) => {
+    element.inert = true;
+    element.setAttribute("aria-hidden", "true");
+  });
+
+  return () => previousState.forEach(({ element, inert, ariaHidden }) => {
+    element.inert = inert;
+    if (ariaHidden === null) element.removeAttribute("aria-hidden");
+    else element.setAttribute("aria-hidden", ariaHidden);
+  });
+}
+
+function runPageTransition(update: () => void) {
+  const transitionDocument = document as ViewTransitionDocument;
+  if (!transitionDocument.startViewTransition || prefersReducedMotion()) {
+    pageTransitionSequence += 1;
+    activePageTransition?.skipTransition?.();
+    activePageTransition = null;
+    delete document.documentElement.dataset.pageTransition;
+    update();
+    return;
+  }
+
+  const transitionSequence = ++pageTransitionSequence;
+  if (activePageTransition) {
+    activePageTransition.skipTransition?.();
+    activePageTransition = null;
+    delete document.documentElement.dataset.pageTransition;
+    flushSync(update);
+    return;
+  }
+
+  let committed = false;
+  const commit = () => {
+    if (committed || transitionSequence !== pageTransitionSequence) return;
+    committed = true;
+    flushSync(update);
+  };
+
+  document.documentElement.dataset.pageTransition = "running";
+  try {
+    const transition = transitionDocument.startViewTransition(commit);
+    document.documentElement.classList.add("view-transitions-enabled");
+    activePageTransition = transition;
+    void transition.finished.then(
+      () => undefined,
+      () => undefined,
+    ).finally(() => {
+      if (transitionSequence !== pageTransitionSequence) return;
+      activePageTransition = null;
+      delete document.documentElement.dataset.pageTransition;
+    });
+  } catch {
+    if (transitionSequence === pageTransitionSequence) {
+      activePageTransition = null;
+      delete document.documentElement.dataset.pageTransition;
+    }
+    commit();
+  }
+}
+
+// TODO: Complete browser interaction coverage for rapid page transitions and modal focus behavior.
+function useAnimatedDismiss(onDismiss: () => void, duration: number) {
+  const [closing, setClosing] = useState(false);
+  const closingRef = useRef(false);
+  const dismissRef = useRef(onDismiss);
+  const timerRef = useRef<number | undefined>(undefined);
+
+  useEffect(() => {
+    dismissRef.current = onDismiss;
+  }, [onDismiss]);
+
+  useEffect(() => () => window.clearTimeout(timerRef.current), []);
+
+  const requestDismiss = useCallback(() => {
+    if (closingRef.current) return;
+    closingRef.current = true;
+
+    if (prefersReducedMotion()) {
+      dismissRef.current();
+      return;
+    }
+
+    setClosing(true);
+    timerRef.current = window.setTimeout(() => dismissRef.current(), duration);
+  }, [duration]);
+
+  return [closing, requestDismiss] as const;
+}
 
 const mockGuestbookComments: GuestbookComment[] = [
   { name: "林川", body: "JUC 基础系列讲得很清楚，期待线程池这一篇的完整整理。", date: "今天 10:24", color: "ice" },
@@ -332,6 +470,7 @@ function App() {
   const [activeCategory, setActiveCategory] = useState("全部文章");
   const [selectedArticle, setSelectedArticle] = useState<Article | null>(null);
   const [selectedCreation, setSelectedCreation] = useState<Creation | null>(null);
+  const [viewSequence, setViewSequence] = useState(0);
   const [message, setMessage] = useState("");
   const [visitor, setVisitor] = useState("");
   const [comments, setComments] = useState<GuestbookComment[]>(() => {
@@ -390,11 +529,26 @@ function App() {
     [activeCategory],
   );
 
-  function navigate(nextView: View) {
-    setView(nextView);
-    setSelectedArticle(null);
+  function openArticle(article: Article) {
     setSelectedCreation(null);
-    window.scrollTo({ top: 0, behavior: "smooth" });
+    setSelectedArticle(article);
+  }
+
+  function openCreation(creation: Creation) {
+    setSelectedArticle(null);
+    setSelectedCreation(creation);
+  }
+
+  function navigate(nextView: View) {
+    if (nextView === view && !selectedArticle && !selectedCreation) return;
+
+    runPageTransition(() => {
+      setView(nextView);
+      setSelectedArticle(null);
+      setSelectedCreation(null);
+      setViewSequence((sequence) => sequence + 1);
+      window.scrollTo({ top: 0, behavior: "auto" });
+    });
   }
 
   function submitMessage(event: FormEvent<HTMLFormElement>, color: NoteColor) {
@@ -425,32 +579,34 @@ function App() {
           <span>ALEX / WORKS</span>
         </button>
         <nav className="main-nav" aria-label="主导航">
-          <button className={view === "home" ? "active" : ""} onClick={() => navigate("home")}>主页</button>
-          <button className={view === "articles" ? "active" : ""} onClick={() => navigate("articles")}>文章</button>
-          <button className={view === "notes" ? "active" : ""} onClick={() => navigate("notes")}>笔记</button>
-          <button className={view === "gallery" ? "active" : ""} onClick={() => navigate("gallery")}>创作图库</button>
-          <button className={view === "studio" ? "active" : ""} onClick={() => navigate("studio")}>创作中心</button>
-          <button className={view === "guestbook" ? "active" : ""} onClick={() => navigate("guestbook")}>留言板</button>
+          <button aria-current={view === "home" ? "page" : undefined} className={view === "home" ? "active" : ""} onClick={() => navigate("home")}>主页</button>
+          <button aria-current={view === "articles" ? "page" : undefined} className={view === "articles" ? "active" : ""} onClick={() => navigate("articles")}>文章</button>
+          <button aria-current={view === "notes" ? "page" : undefined} className={view === "notes" ? "active" : ""} onClick={() => navigate("notes")}>笔记</button>
+          <button aria-current={view === "gallery" ? "page" : undefined} className={view === "gallery" ? "active" : ""} onClick={() => navigate("gallery")}>创作图库</button>
+          <button aria-current={view === "studio" ? "page" : undefined} className={view === "studio" ? "active" : ""} onClick={() => navigate("studio")}>创作中心</button>
+          <button aria-current={view === "guestbook" ? "page" : undefined} className={view === "guestbook" ? "active" : ""} onClick={() => navigate("guestbook")}>留言板</button>
         </nav>
         <span className={`api-pill api-pill-${apiState}`}><span />{apiState === "online" ? "在线" : apiState === "offline" ? "离线 Demo" : "连接中"}</span>
       </header>
 
-      {view !== "home" && view !== "guestbook" && view !== "articles" && <section className="page-intro">
-        <h1>{viewTitle[view]}</h1>
-        <p className="intro-copy">汇集 Java 技术文章、阅读笔记、AI 图像作品和 AI 编程项目。</p>
-      </section>}
+      <div className={`page-stage page-stage-${view}`} key={`${view}-${viewSequence}`}>
+        {view !== "home" && view !== "guestbook" && view !== "articles" && <section className="page-intro">
+          <h1>{viewTitle[view]}</h1>
+          <p className="intro-copy">汇集 Java 技术文章、阅读笔记、AI 图像作品和 AI 编程项目。</p>
+        </section>}
 
-      {view === "home" && <Home navigate={navigate} setSelectedCreation={setSelectedCreation} setSelectedArticle={setSelectedArticle} />}
-      {view === "articles" && (
-        <Articles activeCategory={activeCategory} setActiveCategory={setActiveCategory} filteredArticles={filteredArticles} setSelectedArticle={setSelectedArticle} />
-      )}
-      {view === "notes" && <Notes />}
-      {view === "gallery" && <Gallery creations={creations} setSelectedCreation={setSelectedCreation} />}
-      {view === "studio" && <Studio creations={creations} setSelectedCreation={setSelectedCreation} />}
-      {view === "guestbook" && <Guestbook visitor={visitor} message={message} setVisitor={setVisitor} setMessage={setMessage} comments={comments} submitMessage={submitMessage} />}
+        {view === "home" && <Home navigate={navigate} setSelectedCreation={openCreation} setSelectedArticle={openArticle} />}
+        {view === "articles" && (
+          <Articles activeCategory={activeCategory} setActiveCategory={setActiveCategory} filteredArticles={filteredArticles} setSelectedArticle={openArticle} />
+        )}
+        {view === "notes" && <Notes />}
+        {view === "gallery" && <Gallery creations={creations} setSelectedCreation={openCreation} />}
+        {view === "studio" && <Studio creations={creations} setSelectedCreation={openCreation} />}
+        {view === "guestbook" && <Guestbook visitor={visitor} message={message} setVisitor={setVisitor} setMessage={setMessage} comments={comments} submitMessage={submitMessage} />}
+      </div>
 
-      {selectedArticle && <ArticleReader article={selectedArticle} close={() => setSelectedArticle(null)} />}
-      {selectedCreation && <CreationDrawer creation={selectedCreation} close={() => setSelectedCreation(null)} />}
+      {selectedArticle && <ArticleReader article={selectedArticle} close={() => setSelectedArticle((current) => current === selectedArticle ? null : current)} key={selectedArticle.title} />}
+      {selectedCreation && <CreationDrawer creation={selectedCreation} close={() => setSelectedCreation((current) => current === selectedCreation ? null : current)} key={selectedCreation.title} />}
 
       <footer className="site-footer">
         <div className="footer-primary"><strong>NextAlex</strong><span>© {new Date().getFullYear()} NextAlex. All rights reserved.</span></div>
@@ -533,8 +689,205 @@ function Guestbook({ visitor, message, setVisitor, setMessage, comments, submitM
 }
 
 function ArticleReader({ article, close }: { article: Article; close: () => void }) {
-  return <section className="article-reader" aria-label="文章正文"><header className="article-reader-header"><button className="article-reader-back" onClick={close}>← 返回文章</button></header><article className="article-reader-content"><header className="article-reader-intro"><p>{article.category} · {article.series}</p><h1>{article.title}</h1><time>{article.date} · {article.readTime}</time></header><div className="markdown-content"><ReactMarkdown remarkPlugins={[remarkGfm]}>{article.content}</ReactMarkdown></div></article></section>;
+  const readerRef = useRef<HTMLElement>(null);
+  const contentRef = useRef<HTMLElement>(null);
+  const outlineRef = useRef<HTMLElement>(null);
+  const outlineToggleRef = useRef<HTMLButtonElement>(null);
+  const backButtonRef = useRef<HTMLButtonElement>(null);
+  const outlineOpenRef = useRef(false);
+  const [headings, setHeadings] = useState<ArticleHeading[]>([]);
+  const [activeHeading, setActiveHeading] = useState(0);
+  const [outlineOpen, setOutlineOpen] = useState(false);
+  const [closing, requestClose] = useAnimatedDismiss(close, 180);
+
+  useEffect(() => {
+    outlineOpenRef.current = outlineOpen;
+  }, [outlineOpen]);
+
+  useEffect(() => {
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const previousOverflow = document.body.style.overflow;
+    const reader = readerRef.current;
+    const restoreSiblings = reader ? hideModalSiblings(reader) : () => undefined;
+    const focusFrame = window.requestAnimationFrame(() => backButtonRef.current?.focus({ preventScroll: true }));
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      if (outlineOpenRef.current) {
+        setOutlineOpen(false);
+        window.requestAnimationFrame(() => outlineToggleRef.current?.focus({ preventScroll: true }));
+        return;
+      }
+      requestClose();
+    };
+    const keepFocusInside = (event: KeyboardEvent) => {
+      if (reader) trapModalFocus(event, reader);
+    };
+
+    document.body.style.overflow = "hidden";
+    document.addEventListener("keydown", closeOnEscape);
+    document.addEventListener("keydown", keepFocusInside);
+    return () => {
+      window.cancelAnimationFrame(focusFrame);
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener("keydown", closeOnEscape);
+      document.removeEventListener("keydown", keepFocusInside);
+      restoreSiblings();
+      previousFocus?.focus({ preventScroll: true });
+    };
+  }, [requestClose]);
+
+  useEffect(() => {
+    const reader = readerRef.current;
+    const content = contentRef.current;
+    if (!reader || !content) return;
+
+    reader.scrollTop = 0;
+    const headingElements = Array.from(content.querySelectorAll<HTMLElement>(".article-reader-intro h1, .markdown-content h2, .markdown-content h3"));
+    const nextHeadings = headingElements.map((heading, index) => {
+      const id = `article-heading-${index}`;
+      heading.id = id;
+      heading.tabIndex = -1;
+      return {
+        id,
+        title: heading.textContent?.trim() || `第 ${index + 1} 节`,
+        level: Number(heading.tagName.slice(1)) as ArticleHeading["level"],
+      };
+    });
+
+    setHeadings(nextHeadings);
+    setActiveHeading(0);
+    setOutlineOpen(false);
+  }, [article]);
+
+  useEffect(() => {
+    const reader = readerRef.current;
+    if (!reader || headings.length === 0) return;
+
+    const updateActiveHeading = () => {
+      const readerTop = reader.getBoundingClientRect().top;
+      const activationLine = readerTop + Math.min(180, reader.clientHeight * .24);
+      let nextActive = 0;
+
+      headings.forEach((heading, index) => {
+        const element = document.getElementById(heading.id);
+        if (element && element.getBoundingClientRect().top <= activationLine) nextActive = index;
+      });
+
+      setActiveHeading((current) => current === nextActive ? current : nextActive);
+    };
+
+    updateActiveHeading();
+    reader.addEventListener("scroll", updateActiveHeading, { passive: true });
+    window.addEventListener("resize", updateActiveHeading);
+    return () => {
+      reader.removeEventListener("scroll", updateActiveHeading);
+      window.removeEventListener("resize", updateActiveHeading);
+    };
+  }, [headings]);
+
+  useEffect(() => {
+    if (!outlineOpen) return;
+
+    const closeOutline = (event: PointerEvent) => {
+      if (!outlineRef.current?.contains(event.target as Node)) setOutlineOpen(false);
+    };
+
+    document.addEventListener("pointerdown", closeOutline);
+    return () => {
+      document.removeEventListener("pointerdown", closeOutline);
+    };
+  }, [outlineOpen]);
+
+  const jumpToHeading = (heading: ArticleHeading, index: number) => {
+    const target = contentRef.current?.querySelector<HTMLElement>(`#${heading.id}`);
+    target?.scrollIntoView({ behavior: prefersReducedMotion() ? "auto" : "smooth", block: "start" });
+    target?.focus({ preventScroll: true });
+    setActiveHeading(index);
+    setOutlineOpen(false);
+  };
+
+  return (
+    <section className={`article-reader${closing ? " is-closing" : ""}`} aria-label="文章正文" aria-modal="true" role="dialog" ref={readerRef} tabIndex={-1}>
+      <header className="article-reader-header"><button className="article-reader-back" onClick={requestClose} ref={backButtonRef}>← 返回文章</button></header>
+      <article className="article-reader-content" ref={contentRef}>
+        <header className="article-reader-intro"><p>{article.category} · {article.series}</p><h1>{article.title}</h1><time>{article.date} · {article.readTime}</time></header>
+        <div className="markdown-content"><ReactMarkdown remarkPlugins={[remarkGfm]}>{article.content}</ReactMarkdown></div>
+      </article>
+      {headings.length > 1 && (
+        <nav className={`article-outline${outlineOpen ? " is-open" : ""}`} aria-label="文章导览" ref={outlineRef}>
+          <button
+            className="article-outline-toggle"
+            type="button"
+            aria-label={outlineOpen ? "收起文章导览" : "展开文章导览"}
+            aria-expanded={outlineOpen}
+            onClick={() => setOutlineOpen((open) => !open)}
+            ref={outlineToggleRef}
+          >
+            <span className="article-outline-rail" aria-hidden="true">
+              {headings.map((heading, index) => <i className={`level-${heading.level}${activeHeading === index ? " active" : ""}`} key={heading.id} />)}
+            </span>
+          </button>
+          <div className="article-outline-panel" aria-hidden={!outlineOpen}>
+            {headings.map((heading, index) => (
+              <button
+                className={`article-outline-link level-${heading.level}${activeHeading === index ? " active" : ""}`}
+                key={heading.id}
+                onClick={() => jumpToHeading(heading, index)}
+                style={{ animationDelay: `${Math.min(index * 10, 60)}ms` }}
+                tabIndex={outlineOpen ? 0 : -1}
+                type="button"
+              >
+                {heading.title}
+              </button>
+            ))}
+          </div>
+        </nav>
+      )}
+    </section>
+  );
 }
-function CreationDrawer({ creation, close }: { creation: Creation; close: () => void }) { return <div className="drawer-backdrop" onClick={close}><article className="drawer creation-drawer" onClick={(event) => event.stopPropagation()}><button className="close-button" onClick={close} aria-label="关闭">×</button><img src={creation.image} alt={creation.title} /><p className="section-kicker">{creation.type} / {creation.state}</p><h2>{creation.title}</h2><p className="drawer-copy">{creation.description}</p><div className="demo-callout">作品详情、Prompt 和版本记录将在创作中心 API 接入后开放。</div></article></div>; }
+function CreationDrawer({ creation, close }: { creation: Creation; close: () => void }) {
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const [closing, requestClose] = useAnimatedDismiss(close, 180);
+
+  useEffect(() => {
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const previousOverflow = document.body.style.overflow;
+    const backdrop = closeButtonRef.current?.closest<HTMLElement>(".drawer-backdrop") || null;
+    const restoreSiblings = backdrop ? hideModalSiblings(backdrop) : () => undefined;
+    const focusFrame = window.requestAnimationFrame(() => closeButtonRef.current?.focus({ preventScroll: true }));
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") requestClose();
+    };
+    const keepFocusInside = (event: KeyboardEvent) => {
+      if (backdrop) trapModalFocus(event, backdrop);
+    };
+
+    document.body.style.overflow = "hidden";
+    document.addEventListener("keydown", closeOnEscape);
+    document.addEventListener("keydown", keepFocusInside);
+    return () => {
+      window.cancelAnimationFrame(focusFrame);
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener("keydown", closeOnEscape);
+      document.removeEventListener("keydown", keepFocusInside);
+      restoreSiblings();
+      previousFocus?.focus({ preventScroll: true });
+    };
+  }, [requestClose]);
+
+  return (
+    <div className={`drawer-backdrop${closing ? " is-closing" : ""}`} onClick={requestClose}>
+      <article className="drawer creation-drawer" aria-label={creation.title} aria-modal="true" role="dialog" onClick={(event) => event.stopPropagation()}>
+        <button className="close-button" onClick={requestClose} aria-label="关闭" ref={closeButtonRef}>×</button>
+        <img src={creation.image} alt={creation.title} />
+        <p className="section-kicker">{creation.type} / {creation.state}</p>
+        <h2>{creation.title}</h2>
+        <p className="drawer-copy">{creation.description}</p>
+        <div className="demo-callout">作品详情、Prompt 和版本记录将在创作中心 API 接入后开放。</div>
+      </article>
+    </div>
+  );
+}
 
 export default App;
