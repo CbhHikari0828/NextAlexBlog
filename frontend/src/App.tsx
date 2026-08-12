@@ -1,4 +1,6 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 type View = "home" | "articles" | "notes" | "gallery" | "studio" | "guestbook";
 type ApiState = "checking" | "online" | "offline";
@@ -10,6 +12,7 @@ type Article = {
   date: string;
   readTime: string;
   excerpt: string;
+  content: string;
 };
 
 type Creation = {
@@ -70,6 +73,7 @@ function getNoteLayout(index: number) {
   };
 }
 
+/*
 const articles: Article[] = [
   {
     title: "从可见性到有序性：并发编程的第一性原理",
@@ -78,6 +82,45 @@ const articles: Article[] = [
     date: "2026.08.08",
     readTime: "12 min",
     excerpt: "梳理 happens-before、锁和原子性的关系，说明 Java 线程安全的核心约束。",
+    content: `## 从共享状态开始
+
+并发问题不是由线程数量本身造成的，而是由**共享状态**和**状态转换**共同决定的。
+
+当多个线程同时读写同一份数据时，需要明确三件事：
+
+1. 写入是否对其他线程可见
+2. 操作之间是否允许重排
+3. 复合操作是否具备原子性
+
+## happens-before
+
+`happens-before` 不是执行时间上的先后，而是一条可见性与有序性的约束关系。
+
+> 如果操作 A happens-before 操作 B，那么 A 的结果对 B 可见，且 A 的执行顺序排在 B 之前。
+
+```java
+private volatile boolean started;
+
+void start() {
+  started = true;
+}
+
+boolean isStarted() {
+  return started;
+}
+```
+
+`volatile` 适合状态标记这类简单场景。涉及多个变量的一致性时，仍需要锁或更高层的并发工具。
+
+## 选择工具
+
+| 场景 | 优先选择 |
+| --- | --- |
+| 单个状态标记 | `volatile` |
+| 单变量原子更新 | `AtomicInteger` |
+| 多状态一致性 | `synchronized` 或 `Lock` |
+
+并发设计的第一步不是选工具，而是先写清楚需要被保护的状态边界。`,
   },
   {
     title: "一张图读懂 Java 线程池的生命周期",
@@ -86,6 +129,22 @@ const articles: Article[] = [
     date: "2026.08.01",
     readTime: "9 min",
     excerpt: "从任务提交到 Worker 退出，记录 ThreadPoolExecutor 最容易被忽略的状态变化。",
+    content: `## 线程池不是任务队列
+
+提交任务后，线程池会根据核心线程数、队列容量和最大线程数做出不同决策。
+
+```text
+提交任务 -> 核心线程 -> 工作队列 -> 非核心线程 -> 拒绝策略
+```
+
+## 观察重点
+
+- 活跃线程数
+- 队列长度
+- 已完成任务数
+- 拒绝次数
+
+这些指标组合起来，才能判断问题发生在生产、排队还是消费阶段。`,
   },
   {
     title: "用 CompletableFuture 编排一次可靠的异步流程",
@@ -94,6 +153,20 @@ const articles: Article[] = [
     date: "2026.07.22",
     readTime: "15 min",
     excerpt: "并行、超时、降级和异常恢复，组合成可以在生产环境里落地的异步代码。",
+    content: `## 组合异步流程
+
+`CompletableFuture` 的价值在于把依赖关系直接表达为代码结构。
+
+```java
+CompletableFuture<String> profile = loadProfile(userId);
+CompletableFuture<List<Order>> orders = loadOrders(userId);
+
+return profile.thenCombine(orders, Result::new);
+```
+
+## 失败路径
+
+异步链路需要和成功路径一样被设计：超时、降级和异常恢复应该靠近调用点，而不是散落在业务末端。`,
   },
   {
     title: "从 Redis 分布式锁想到的几个边界问题",
@@ -102,7 +175,118 @@ const articles: Article[] = [
     date: "2026.07.14",
     readTime: "11 min",
     excerpt: "锁住的到底是什么？从租约、时钟漂移到 fencing token，重新审视分布式锁。",
+    content: `## 锁住的不是代码
+
+分布式锁真正保护的是对某个资源的写入资格。
+
+## 租约与失效
+
+租约到期并不意味着原持有者一定停止执行。网络延迟和进程暂停都会让“已经失效”的客户端继续发送请求。
+
+> 因此，锁本身不足以证明写入仍然有效。
+
+## Fencing Token
+
+为每次持锁分配单调递增的 token，并让资源服务拒绝旧 token 的写入，才能在资源侧建立最终防线。`,
   },
+];
+
+*/
+
+const articleBodies = {
+  concurrency: [
+    "## 从共享状态开始",
+    "",
+    "并发问题不是由线程数量本身造成的，而是由**共享状态**和**状态转换**共同决定的。",
+    "",
+    "当多个线程同时读写同一份数据时，需要明确三件事：",
+    "",
+    "1. 写入是否对其他线程可见",
+    "2. 操作之间是否允许重排",
+    "3. 复合操作是否具备原子性",
+    "",
+    "## happens-before",
+    "",
+    "`happens-before` 不是执行时间上的先后，而是一条可见性与有序性的约束关系。",
+    "",
+    "> 如果操作 A happens-before 操作 B，那么 A 的结果对 B 可见，且 A 的执行顺序排在 B 之前。",
+    "",
+    "```java",
+    "private volatile boolean started;",
+    "",
+    "void start() {",
+    "  started = true;",
+    "}",
+    "",
+    "boolean isStarted() {",
+    "  return started;",
+    "}",
+    "```",
+    "",
+    "`volatile` 适合状态标记这类简单场景。涉及多个变量的一致性时，仍需要锁或更高层的并发工具。",
+    "",
+    "## 选择工具",
+    "",
+    "| 场景 | 优先选择 |",
+    "| --- | --- |",
+    "| 单个状态标记 | `volatile` |",
+    "| 单变量原子更新 | `AtomicInteger` |",
+    "| 多状态一致性 | `synchronized` 或 `Lock` |",
+  ].join("\n"),
+  threadPool: [
+    "## 线程池不是任务队列",
+    "",
+    "提交任务后，线程池会根据核心线程数、队列容量和最大线程数做出不同决策。",
+    "",
+    "```text",
+    "提交任务 -> 核心线程 -> 工作队列 -> 非核心线程 -> 拒绝策略",
+    "```",
+    "",
+    "## 观察重点",
+    "",
+    "- 活跃线程数",
+    "- 队列长度",
+    "- 已完成任务数",
+    "- 拒绝次数",
+  ].join("\n"),
+  completableFuture: [
+    "## 组合异步流程",
+    "",
+    "`CompletableFuture` 的价值在于把依赖关系直接表达为代码结构。",
+    "",
+    "```java",
+    "CompletableFuture<String> profile = loadProfile(userId);",
+    "CompletableFuture<List<Order>> orders = loadOrders(userId);",
+    "",
+    "return profile.thenCombine(orders, Result::new);",
+    "```",
+    "",
+    "## 失败路径",
+    "",
+    "异步链路需要和成功路径一样被设计：超时、降级和异常恢复应该靠近调用点。",
+  ].join("\n"),
+  distributedLock: [
+    "## 锁住的不是代码",
+    "",
+    "分布式锁真正保护的是对某个资源的写入资格。",
+    "",
+    "## 租约与失效",
+    "",
+    "租约到期并不意味着原持有者一定停止执行。网络延迟和进程暂停都会让已经失效的客户端继续发送请求。",
+    "",
+    "> 因此，锁本身不足以证明写入仍然有效。",
+    "",
+    "## Fencing Token",
+    "",
+    "为每次持锁分配单调递增的 token，并让资源服务拒绝旧 token 的写入，才能在资源侧建立最终防线。",
+  ].join("\n"),
+};
+
+const articles: Article[] = [
+  { title: "从可见性到有序性：并发编程的第一性原理", category: "Java 并发编程", series: "JUC 基础", date: "2026.08.08", readTime: "12 min", excerpt: "梳理 happens-before、锁和原子性的关系，说明 Java 线程安全的核心约束。", content: articleBodies.concurrency },
+  { title: "一张图读懂 Java 线程池的生命周期", category: "Java 并发编程", series: "JUC 基础", date: "2026.08.01", readTime: "9 min", excerpt: "从任务提交到 Worker 退出，记录 ThreadPoolExecutor 最容易被忽略的状态变化。", content: articleBodies.threadPool },
+  { title: "用 CompletableFuture 编排一次可靠的异步流程", category: "Java 并发编程", series: "异步工具箱", date: "2026.07.22", readTime: "15 min", excerpt: "并行、超时、降级和异常恢复，组合成可以在生产环境里落地的异步代码。", content: articleBodies.completableFuture },
+  { title: "从 Redis 分布式锁想到的几个边界问题", category: "后端实践", series: "系统设计", date: "2026.07.14", readTime: "11 min", excerpt: "锁住的到底是什么？从租约、时钟漂移到 fencing token，重新审视分布式锁。", content: articleBodies.distributedLock },
 ];
 
 const creations: Creation[] = [
@@ -138,7 +322,7 @@ const notes = [
   { date: "07.29", title: "《置身事内》阅读摘要", body: "整理地方经济运行机制及其与具体决策之间的关系。" },
 ];
 
-const categories = ["全部文章", "JUC 基础", "异步工具箱", "系统设计"];
+const categories = ["全部文章", "Java 并发编程", "JUC 基础", "异步工具箱", "后端实践", "系统设计"];
 
 function App() {
   const [view, setView] = useState<View>("home");
@@ -202,7 +386,7 @@ function App() {
   }, []);
 
   const filteredArticles = useMemo(
-    () => activeCategory === "全部文章" ? articles : articles.filter((article) => article.series === activeCategory),
+    () => activeCategory === "全部文章" ? articles : articles.filter((article) => article.category === activeCategory || article.series === activeCategory),
     [activeCategory],
   );
 
@@ -233,7 +417,7 @@ function App() {
   };
 
   return (
-    <main className={`app-shell${view === "home" ? " home-shell" : ""}${view === "guestbook" ? " guestbook-shell" : ""}`}>
+    <main className={`app-shell${view === "home" ? " home-shell" : ""}${view === "articles" ? " articles-shell" : ""}${view === "guestbook" ? " guestbook-shell" : ""}`}>
       {(copyNoticeVisible || developerToolsOpen) && <div className="developer-tools-notice" role="status">{copyNoticeVisible ? "复制已完成，转载请标明出处" : "开发者模式已打开，请遵循 GPL 协议"}</div>}
       <header className="site-header">
         <button className="brand" onClick={() => navigate("home")} aria-label="返回首页">
@@ -251,7 +435,7 @@ function App() {
         <span className={`api-pill api-pill-${apiState}`}><span />{apiState === "online" ? "在线" : apiState === "offline" ? "离线 Demo" : "连接中"}</span>
       </header>
 
-      {view !== "home" && view !== "guestbook" && <section className="page-intro">
+      {view !== "home" && view !== "guestbook" && view !== "articles" && <section className="page-intro">
         <h1>{viewTitle[view]}</h1>
         <p className="intro-copy">汇集 Java 技术文章、阅读笔记、AI 图像作品和 AI 编程项目。</p>
       </section>}
@@ -265,7 +449,7 @@ function App() {
       {view === "studio" && <Studio creations={creations} setSelectedCreation={setSelectedCreation} />}
       {view === "guestbook" && <Guestbook visitor={visitor} message={message} setVisitor={setVisitor} setMessage={setMessage} comments={comments} submitMessage={submitMessage} />}
 
-      {selectedArticle && <ArticleDrawer article={selectedArticle} close={() => setSelectedArticle(null)} />}
+      {selectedArticle && <ArticleReader article={selectedArticle} close={() => setSelectedArticle(null)} />}
       {selectedCreation && <CreationDrawer creation={selectedCreation} close={() => setSelectedCreation(null)} />}
 
       <footer className="site-footer">
@@ -325,7 +509,7 @@ function Home({ navigate, setSelectedCreation, setSelectedArticle }: { navigate:
 }
 
 function Articles({ activeCategory, setActiveCategory, filteredArticles, setSelectedArticle }: { activeCategory: string; setActiveCategory: (category: string) => void; filteredArticles: Article[]; setSelectedArticle: (article: Article) => void }) {
-  return <section className="content-band"><div className="filter-row">{categories.map((category) => <button key={category} className={activeCategory === category ? "filter-active" : ""} onClick={() => setActiveCategory(category)}>{category}</button>)}</div><div className="article-list">{filteredArticles.map((article, index) => <button className="article-row" key={article.title} onClick={() => setSelectedArticle(article)}><span className="article-number">{String(index + 1).padStart(2, "0")}</span><div className="article-main"><p>{article.category} / {article.series}</p><h2>{article.title}</h2><span>{article.excerpt}</span></div><div className="article-date"><time>{article.date}</time><small>{article.readTime}</small><b>↗</b></div></button>)}</div></section>;
+  return <section className="content-band article-index"><div className="article-feed"><h1>最新发布</h1><div className="article-list">{filteredArticles.map((article) => <button className="article-feed-item" key={article.title} onClick={() => setSelectedArticle(article)}><h2>{article.title}</h2><p>{article.excerpt}</p><span className="article-read-action">阅读全文 <i aria-hidden="true">→</i></span></button>)}</div></div><aside className="article-aside"><section className="article-category-panel"><h2>文章分类</h2><div className="article-category-tags" role="tablist" aria-label="文章分类">{categories.map((category) => <button key={category} role="tab" aria-selected={activeCategory === category} className={activeCategory === category ? "filter-active" : ""} onClick={() => setActiveCategory(category)}>{category}</button>)}</div></section><section className="popular-articles"><h2>热门文章</h2><div>{articles.map((article) => <button key={article.title} onClick={() => setSelectedArticle(article)}><span aria-hidden="true">→</span>{article.title}</button>)}</div></section></aside></section>;
 }
 
 function Notes() {
@@ -345,10 +529,12 @@ function Guestbook({ visitor, message, setVisitor, setMessage, comments, submitM
   const visibleComments = comments.length > 0 ? comments : mockGuestbookComments;
   const boardHeight = 690 + Math.max(0, Math.ceil(visibleComments.length / noteLayouts.length) - 1) * 180;
 
-  return <section className="guestbook-wall"><div className="guestbook-canvas"><div className="note-board" aria-live="polite" style={{ "--note-board-height": `${boardHeight}px` } as React.CSSProperties}>{visibleComments.map((comment, index) => { const layout = getNoteLayout(index); return <article className={`visitor-note visitor-note-${comment.color}`} key={`${comment.name}-${index}`} style={{ "--note-x": layout.x, "--note-y": layout.y, "--note-tilt": `${layout.tilt}deg`, "--note-z": layout.z, "--note-delay": `${index * 55}ms` } as React.CSSProperties}><div className="visitor-note-top"><span className="note-pins"><i /><i /><i /></span><time>{comment.date}</time></div><p>{comment.body}</p><footer>{comment.name}</footer></article>; })}</div></div><section className="guestbook-editor"><form className="message-form guestbook-editor-form" onSubmit={(event) => submitMessage(event, selectedColor)}><h2>发布留言</h2><label>姓名或昵称<input value={visitor} onChange={(event) => setVisitor(event.target.value)} placeholder="请输入姓名或昵称" maxLength={20} required /></label><label>留言内容<textarea value={message} onChange={(event) => setMessage(event.target.value)} placeholder="请输入留言内容" maxLength={160} rows={5} required /></label><div className="note-color-picker" aria-label="便签颜色">{noteColors.map((color) => <button key={color} type="button" className={`note-color note-color-${color}${selectedColor === color ? " selected" : ""}`} onClick={() => setSelectedColor(color)} aria-label={`选择${color}颜色`} />)}</div><div className="message-form-footer"><span>{message.length}/160</span><button className="solid-action" type="submit">发布便签 <span>↗</span></button></div></form></section></section>;
+  return <><div className="guestbook-background" aria-hidden="true" /><section className="guestbook-wall"><div className="guestbook-canvas"><div className="note-board" aria-live="polite" style={{ "--note-board-height": `${boardHeight}px` } as React.CSSProperties}>{visibleComments.map((comment, index) => { const layout = getNoteLayout(index); return <article className={`visitor-note visitor-note-${comment.color}`} key={`${comment.name}-${index}`} style={{ "--note-x": layout.x, "--note-y": layout.y, "--note-tilt": `${layout.tilt}deg`, "--note-z": layout.z, "--note-delay": `${index * 55}ms` } as React.CSSProperties}><div className="visitor-note-top"><span className="note-pins"><i /><i /><i /></span><time>{comment.date}</time></div><p>{comment.body}</p><footer>{comment.name}</footer></article>; })}</div><section className="guestbook-editor"><form className="message-form guestbook-editor-form" onSubmit={(event) => submitMessage(event, selectedColor)}><h2>发布留言</h2><label>姓名或昵称<input value={visitor} onChange={(event) => setVisitor(event.target.value)} placeholder="请输入姓名或昵称" maxLength={20} required /></label><label>留言内容<textarea value={message} onChange={(event) => setMessage(event.target.value)} placeholder="请输入留言内容" maxLength={160} rows={5} required /></label><div className="note-color-picker" aria-label="便签颜色">{noteColors.map((color) => <button key={color} type="button" className={`note-color note-color-${color}${selectedColor === color ? " selected" : ""}`} onClick={() => setSelectedColor(color)} aria-label={`选择${color}颜色`} />)}</div><div className="message-form-footer"><span>{message.length}/160</span><button className="solid-action" type="submit">发布便签 <span>↗</span></button></div></form></section></div></section></>;
 }
 
-function ArticleDrawer({ article, close }: { article: Article; close: () => void }) { return <div className="drawer-backdrop" onClick={close}><article className="drawer" onClick={(event) => event.stopPropagation()}><button className="close-button" onClick={close} aria-label="关闭">×</button><p className="section-kicker">{article.category} / {article.series}</p><h2>{article.title}</h2><time>{article.date} · {article.readTime}</time><p className="drawer-copy">{article.excerpt}</p><div className="demo-callout">文章正文将在后端接入后从 Markdown 内容加载。</div></article></div>; }
+function ArticleReader({ article, close }: { article: Article; close: () => void }) {
+  return <section className="article-reader" aria-label="文章正文"><header className="article-reader-header"><button className="article-reader-back" onClick={close}>← 返回文章</button></header><article className="article-reader-content"><header className="article-reader-intro"><p>{article.category} · {article.series}</p><h1>{article.title}</h1><time>{article.date} · {article.readTime}</time></header><div className="markdown-content"><ReactMarkdown remarkPlugins={[remarkGfm]}>{article.content}</ReactMarkdown></div></article></section>;
+}
 function CreationDrawer({ creation, close }: { creation: Creation; close: () => void }) { return <div className="drawer-backdrop" onClick={close}><article className="drawer creation-drawer" onClick={(event) => event.stopPropagation()}><button className="close-button" onClick={close} aria-label="关闭">×</button><img src={creation.image} alt={creation.title} /><p className="section-kicker">{creation.type} / {creation.state}</p><h2>{creation.title}</h2><p className="drawer-copy">{creation.description}</p><div className="demo-callout">作品详情、Prompt 和版本记录将在创作中心 API 接入后开放。</div></article></div>; }
 
 export default App;
