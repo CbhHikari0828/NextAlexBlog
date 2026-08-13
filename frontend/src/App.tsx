@@ -1,6 +1,8 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
+import { ChevronLeft, ChevronRight, Eye, GitBranch, Mail, Rss } from "lucide-react";
 import ReactMarkdown from "react-markdown";
+import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
 
 type View = "home" | "articles" | "notes" | "gallery" | "studio" | "guestbook";
@@ -12,6 +14,7 @@ type Article = {
   series: string;
   date: string;
   readTime: string;
+  views: number;
   excerpt: string;
   content: string;
 };
@@ -40,6 +43,13 @@ type Creation = {
   accent: string;
 };
 
+type Note = {
+  date: string;
+  title: string;
+  body: string;
+  content: string[];
+};
+
 type GuestbookComment = {
   name: string;
   body: string;
@@ -49,6 +59,7 @@ type GuestbookComment = {
 
 const noteColors = ["ice", "mint", "lavender", "rose"] as const;
 type NoteColor = typeof noteColors[number];
+const articlesPerPage = 5;
 
 const prefersReducedMotion = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 const focusableSelector = "a[href], button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex='-1'])";
@@ -143,7 +154,8 @@ function runPageTransition(update: () => void) {
   }
 }
 
-// TODO: Complete browser interaction coverage for rapid page transitions and modal focus behavior.
+// Dismissal is delayed only long enough for the exit animation; the ref guard
+// makes repeated Escape/click events idempotent while the overlay is closing.
 function useAnimatedDismiss(onDismiss: () => void, duration: number) {
   const [closing, setClosing] = useState(false);
   const closingRef = useRef(false);
@@ -421,10 +433,16 @@ const articleBodies = {
 };
 
 const articles: Article[] = [
-  { title: "从可见性到有序性：并发编程的第一性原理", category: "Java 并发编程", series: "JUC 基础", date: "2026.08.08", readTime: "12 min", excerpt: "梳理 happens-before、锁和原子性的关系，说明 Java 线程安全的核心约束。", content: articleBodies.concurrency },
-  { title: "一张图读懂 Java 线程池的生命周期", category: "Java 并发编程", series: "JUC 基础", date: "2026.08.01", readTime: "9 min", excerpt: "从任务提交到 Worker 退出，记录 ThreadPoolExecutor 最容易被忽略的状态变化。", content: articleBodies.threadPool },
-  { title: "用 CompletableFuture 编排一次可靠的异步流程", category: "Java 并发编程", series: "异步工具箱", date: "2026.07.22", readTime: "15 min", excerpt: "并行、超时、降级和异常恢复，组合成可以在生产环境里落地的异步代码。", content: articleBodies.completableFuture },
-  { title: "从 Redis 分布式锁想到的几个边界问题", category: "后端实践", series: "系统设计", date: "2026.07.14", readTime: "11 min", excerpt: "锁住的到底是什么？从租约、时钟漂移到 fencing token，重新审视分布式锁。", content: articleBodies.distributedLock },
+  { title: "从可见性到有序性：并发编程的第一性原理", category: "Java 并发编程", series: "JUC 基础", date: "2026.08.08", readTime: "12 min", views: 1284, excerpt: "梳理 happens-before、锁和原子性的关系，说明 Java 线程安全的核心约束。", content: articleBodies.concurrency },
+  { title: "一张图读懂 Java 线程池的生命周期", category: "Java 并发编程", series: "JUC 基础", date: "2026.08.01", readTime: "9 min", views: 967, excerpt: "从任务提交到 Worker 退出，记录 ThreadPoolExecutor 最容易被忽略的状态变化。", content: articleBodies.threadPool },
+  { title: "用 CompletableFuture 编排一次可靠的异步流程", category: "Java 并发编程", series: "异步工具箱", date: "2026.07.22", readTime: "15 min", views: 742, excerpt: "并行、超时、降级和异常恢复，组合成可以在生产环境里落地的异步代码。", content: articleBodies.completableFuture },
+  { title: "从 Redis 分布式锁想到的几个边界问题", category: "后端实践", series: "系统设计", date: "2026.07.14", readTime: "11 min", views: 536, excerpt: "锁住的到底是什么？从租约、时钟漂移到 fencing token，重新审视分布式锁。", content: articleBodies.distributedLock },
+  { title: "并发集合的取舍：从读写比例开始判断", category: "Java 并发编程", series: "JUC 基础", date: "2026.07.05", readTime: "10 min", views: 683, excerpt: "比较 ConcurrentHashMap、CopyOnWriteArrayList 和阻塞队列的适用边界。", content: articleBodies.concurrency },
+  { title: "异步任务的超时、取消与资源回收", category: "Java 并发编程", series: "异步工具箱", date: "2026.06.26", readTime: "8 min", views: 451, excerpt: "让超时不只是抛出异常，而是能够收敛任务、连接和下游资源。", content: articleBodies.completableFuture },
+  { title: "一次线上死锁排查的完整路径", category: "Java 并发编程", series: "JUC 基础", date: "2026.06.18", readTime: "13 min", views: 792, excerpt: "从线程转储、锁等待图到复现策略，记录定位死锁时的关键观察点。", content: articleBodies.concurrency },
+  { title: "限流器设计：保护系统，而不是拒绝用户", category: "后端实践", series: "系统设计", date: "2026.06.09", readTime: "11 min", views: 625, excerpt: "围绕入口、队列和反馈设计限流策略，让系统在高压下仍然可预测。", content: articleBodies.distributedLock },
+  { title: "幂等控制如何落在接口边界", category: "后端实践", series: "系统设计", date: "2026.05.30", readTime: "9 min", views: 418, excerpt: "从请求标识、状态存储到重复提交，拆解接口幂等的实现要点。", content: articleBodies.distributedLock },
+  { title: "异步链路中的异常传播与降级", category: "Java 并发编程", series: "异步工具箱", date: "2026.05.21", readTime: "14 min", views: 574, excerpt: "统一处理异常、超时和兜底结果，避免异步流程在边界处失控。", content: articleBodies.completableFuture },
 ];
 
 const creations: Creation[] = [
@@ -454,10 +472,10 @@ const creations: Creation[] = [
   },
 ];
 
-const notes = [
-  { date: "08.11", title: "并发学习方法", body: "先识别共享状态和状态转换，再选择并发控制方案。" },
-  { date: "08.06", title: "Prompt Garden 交互调整", body: "完成项目工作区的配色和信息层级优化。" },
-  { date: "07.29", title: "《置身事内》阅读摘要", body: "整理地方经济运行机制及其与具体决策之间的关系。" },
+const notes: Note[] = [
+  { date: "08.11", title: "并发学习方法", body: "先识别共享状态和状态转换，再选择并发控制方案。", content: ["并发问题通常不是从锁开始，而是从共享状态开始。先明确哪些数据会被多个线程读取或修改，再标出状态变化发生的位置。", "随后根据一致性要求选择控制方式：只需要可见性时使用 volatile；需要复合操作原子性时使用同步机制或原子类；读多写少的场景则优先评估不可变对象和并发集合。", "每次引入同步都应说明它保护的状态以及释放锁后的不变量，这比单纯记忆 API 更可靠。"] },
+  { date: "08.06", title: "Prompt Garden 交互调整", body: "完成项目工作区的配色和信息层级优化。", content: ["本次调整重点在于压缩无效的视觉噪声，让工作区在首次进入时先呈现任务，而不是装饰。", "配色减少为中性色和单一强调色，标题、说明和状态的层级通过字号与间距建立。交互状态只在悬停和选中时出现，避免持续争夺注意力。", "后续会继续整理移动端的列表密度和面板折叠行为。"] },
+  { date: "07.29", title: "《置身事内》阅读摘要", body: "整理地方经济运行机制及其与具体决策之间的关系。", content: ["地方经济运行并不只是抽象政策的执行结果，也受到土地、融资和招商等具体工具的共同影响。", "阅读时重点关注了政府、企业和金融机构之间的协作关系：不同阶段的目标不同，资源配置的方式也会随之变化。", "这类分析框架可以帮助理解现实项目中的约束条件，而不是只从单一指标判断决策。"] },
 ];
 
 const categories = ["全部文章", "Java 并发编程", "JUC 基础", "异步工具箱", "后端实践", "系统设计"];
@@ -468,8 +486,10 @@ function App() {
   const [developerToolsOpen, setDeveloperToolsOpen] = useState(false);
   const [copyNoticeVisible, setCopyNoticeVisible] = useState(false);
   const [activeCategory, setActiveCategory] = useState("全部文章");
+  const [articlePage, setArticlePage] = useState(1);
   const [selectedArticle, setSelectedArticle] = useState<Article | null>(null);
   const [selectedCreation, setSelectedCreation] = useState<Creation | null>(null);
+  const [selectedNote, setSelectedNote] = useState<Note | null>(null);
   const [viewSequence, setViewSequence] = useState(0);
   const [message, setMessage] = useState("");
   const [visitor, setVisitor] = useState("");
@@ -528,24 +548,44 @@ function App() {
     () => activeCategory === "全部文章" ? articles : articles.filter((article) => article.category === activeCategory || article.series === activeCategory),
     [activeCategory],
   );
+  const articlePageCount = Math.max(1, Math.ceil(filteredArticles.length / articlesPerPage));
+  const visibleArticlePage = Math.min(articlePage, articlePageCount);
+  const paginatedArticles = useMemo(
+    () => filteredArticles.slice((visibleArticlePage - 1) * articlesPerPage, visibleArticlePage * articlesPerPage),
+    [filteredArticles, visibleArticlePage],
+  );
+
+  function selectArticleCategory(category: string) {
+    setActiveCategory(category);
+    setArticlePage(1);
+  }
 
   function openArticle(article: Article) {
     setSelectedCreation(null);
+    setSelectedNote(null);
     setSelectedArticle(article);
   }
 
   function openCreation(creation: Creation) {
     setSelectedArticle(null);
+    setSelectedNote(null);
     setSelectedCreation(creation);
   }
 
+  function openNote(note: Note) {
+    setSelectedArticle(null);
+    setSelectedCreation(null);
+    setSelectedNote(note);
+  }
+
   function navigate(nextView: View) {
-    if (nextView === view && !selectedArticle && !selectedCreation) return;
+    if (nextView === view && !selectedArticle && !selectedCreation && !selectedNote) return;
 
     runPageTransition(() => {
       setView(nextView);
       setSelectedArticle(null);
       setSelectedCreation(null);
+      setSelectedNote(null);
       setViewSequence((sequence) => sequence + 1);
       window.scrollTo({ top: 0, behavior: "auto" });
     });
@@ -571,7 +611,7 @@ function App() {
   };
 
   return (
-    <main className={`app-shell${view === "home" ? " home-shell" : ""}${view === "articles" ? " articles-shell" : ""}${view === "guestbook" ? " guestbook-shell" : ""}`}>
+    <main className={`app-shell${view === "home" ? " home-shell" : ""}${view === "articles" ? " articles-shell" : ""}${view === "notes" ? " notes-shell" : ""}${view === "gallery" ? " gallery-shell" : ""}${view === "guestbook" ? " guestbook-shell" : ""}`}>
       {(copyNoticeVisible || developerToolsOpen) && <div className="developer-tools-notice" role="status">{copyNoticeVisible ? "复制已完成，转载请标明出处" : "开发者模式已打开，请遵循 GPL 协议"}</div>}
       <header className="site-header">
         <button className="brand" onClick={() => navigate("home")} aria-label="返回首页">
@@ -590,16 +630,16 @@ function App() {
       </header>
 
       <div className={`page-stage page-stage-${view}`} key={`${view}-${viewSequence}`}>
-        {view !== "home" && view !== "guestbook" && view !== "articles" && <section className="page-intro">
+        {view !== "home" && view !== "guestbook" && view !== "articles" && view !== "notes" && view !== "gallery" && view !== "studio" && <section className="page-intro">
           <h1>{viewTitle[view]}</h1>
           <p className="intro-copy">汇集 Java 技术文章、阅读笔记、AI 图像作品和 AI 编程项目。</p>
         </section>}
 
         {view === "home" && <Home navigate={navigate} setSelectedCreation={openCreation} setSelectedArticle={openArticle} />}
         {view === "articles" && (
-          <Articles activeCategory={activeCategory} setActiveCategory={setActiveCategory} filteredArticles={filteredArticles} setSelectedArticle={openArticle} />
+          <Articles activeCategory={activeCategory} setActiveCategory={selectArticleCategory} paginatedArticles={paginatedArticles} articlePage={visibleArticlePage} articlePageCount={articlePageCount} setArticlePage={setArticlePage} setSelectedArticle={openArticle} />
         )}
-        {view === "notes" && <Notes />}
+        {view === "notes" && <Notes setSelectedNote={openNote} />}
         {view === "gallery" && <Gallery creations={creations} setSelectedCreation={openCreation} />}
         {view === "studio" && <Studio creations={creations} setSelectedCreation={openCreation} />}
         {view === "guestbook" && <Guestbook visitor={visitor} message={message} setVisitor={setVisitor} setMessage={setMessage} comments={comments} submitMessage={submitMessage} />}
@@ -607,11 +647,10 @@ function App() {
 
       {selectedArticle && <ArticleReader article={selectedArticle} close={() => setSelectedArticle((current) => current === selectedArticle ? null : current)} key={selectedArticle.title} />}
       {selectedCreation && <CreationDrawer creation={selectedCreation} close={() => setSelectedCreation((current) => current === selectedCreation ? null : current)} key={selectedCreation.title} />}
+      {selectedNote && <NoteDialog note={selectedNote} close={() => setSelectedNote((current) => current === selectedNote ? null : current)} key={selectedNote.title} />}
 
-      <footer className="site-footer">
-        <div className="footer-primary"><strong>NextAlex</strong><span>© {new Date().getFullYear()} NextAlex. All rights reserved.</span></div>
-        <div className="footer-meta"><span>Version 0.1.0</span><span>React · Gin · PostgreSQL</span></div>
-        <div className="footer-compliance"><span>ICP备案信息待配置</span><span>公安网备信息待配置</span></div>
+      <footer className={`site-footer${view === "notes" ? " notes-footer" : ""}`}>
+        {view === "notes" ? <><span>© {new Date().getFullYear()} Alex / Works. All rights reserved.</span><span>React · Gin · PostgreSQL</span></> : <><div className="footer-primary"><strong>NextAlex</strong><span>© {new Date().getFullYear()} NextAlex. All rights reserved.</span></div><div className="footer-meta"><span>Version 0.1.0</span><span>React · Gin · PostgreSQL</span></div><div className="footer-compliance"><span>ICP备案信息待配置</span><span>公安网备信息待配置</span></div></>}
       </footer>
     </main>
   );
@@ -664,16 +703,16 @@ function Home({ navigate, setSelectedCreation, setSelectedArticle }: { navigate:
   );
 }
 
-function Articles({ activeCategory, setActiveCategory, filteredArticles, setSelectedArticle }: { activeCategory: string; setActiveCategory: (category: string) => void; filteredArticles: Article[]; setSelectedArticle: (article: Article) => void }) {
-  return <section className="content-band article-index"><div className="article-feed"><h1>最新发布</h1><div className="article-list">{filteredArticles.map((article) => <button className="article-feed-item" key={article.title} onClick={() => setSelectedArticle(article)}><h2>{article.title}</h2><p>{article.excerpt}</p><span className="article-read-action">阅读全文 <i aria-hidden="true">→</i></span></button>)}</div></div><aside className="article-aside"><section className="article-category-panel"><h2>文章分类</h2><div className="article-category-tags" role="tablist" aria-label="文章分类">{categories.map((category) => <button key={category} role="tab" aria-selected={activeCategory === category} className={activeCategory === category ? "filter-active" : ""} onClick={() => setActiveCategory(category)}>{category}</button>)}</div></section><section className="popular-articles"><h2>热门文章</h2><div>{articles.map((article) => <button key={article.title} onClick={() => setSelectedArticle(article)}><span aria-hidden="true">→</span>{article.title}</button>)}</div></section></aside></section>;
+function Articles({ activeCategory, setActiveCategory, paginatedArticles, articlePage, articlePageCount, setArticlePage, setSelectedArticle }: { activeCategory: string; setActiveCategory: (category: string) => void; paginatedArticles: Article[]; articlePage: number; articlePageCount: number; setArticlePage: (page: number) => void; setSelectedArticle: (article: Article) => void }) {
+  return <section className="content-band article-index"><div className="article-feed"><h1>最新发布</h1><div className="article-list">{paginatedArticles.map((article) => <button className="article-feed-item" key={article.title} onClick={() => setSelectedArticle(article)}><h2>{article.title}</h2><p>{article.excerpt}</p><span className="article-read-action">阅读全文 <i aria-hidden="true">→</i></span></button>)}</div><nav className="article-pagination" aria-label="文章分页"><button className="article-pagination-arrow" type="button" onClick={() => setArticlePage(articlePage - 1)} disabled={articlePage === 1} aria-label="上一页" title="上一页"><ChevronLeft aria-hidden="true" size={17} /></button>{Array.from({ length: articlePageCount }, (_, index) => index + 1).map((page) => <button className={`article-pagination-page${page === articlePage ? " active" : ""}`} type="button" key={page} aria-current={page === articlePage ? "page" : undefined} onClick={() => setArticlePage(page)}>{page}</button>)}<button className="article-pagination-arrow" type="button" onClick={() => setArticlePage(articlePage + 1)} disabled={articlePage === articlePageCount} aria-label="下一页" title="下一页"><ChevronRight aria-hidden="true" size={17} /></button></nav></div><aside className="article-aside"><section className="article-category-panel"><h2>文章分类</h2><div className="article-category-tags" role="tablist" aria-label="文章分类">{categories.map((category) => <button key={category} role="tab" aria-selected={activeCategory === category} className={activeCategory === category ? "filter-active" : ""} onClick={() => setActiveCategory(category)}>{category}</button>)}</div></section><section className="popular-articles"><h2>热门文章</h2><div>{articles.slice(0, 5).map((article) => <button key={article.title} onClick={() => setSelectedArticle(article)}><span aria-hidden="true">→</span>{article.title}</button>)}</div></section></aside></section>;
 }
 
-function Notes() {
-  return <section className="content-band notes-layout"><div className="notes-list">{notes.map((note) => <article className="note-entry" key={note.title}><time>{note.date} / 2026</time><h2>{note.title}</h2><p>{note.body}</p></article>)}</div><aside className="side-note"><p>用于记录学习摘要、项目更新和阅读记录。内容按时间顺序归档。</p></aside></section>;
+function Notes({ setSelectedNote }: { setSelectedNote: (note: Note) => void }) {
+  return <section className="content-band notes-layout"><div className="notes-list"><h1>最近更新</h1>{notes.map((note) => <button className="note-entry" type="button" key={note.title} onClick={() => setSelectedNote(note)}><time>{note.date} / 2026</time><span><h2>{note.title}</h2><p>{note.body}</p></span></button>)}</div><aside className="notes-about"><div className="notes-about-card"><h2>关于本站</h2><p>用于记录学习摘要、项目更新和阅读记录。内容按时间顺序归档。</p><div className="notes-about-links"><a href="https://github.com/CbhHikari0828/NextAlexBlog" target="_blank" rel="noreferrer"><GitBranch size={20} aria-hidden="true" />GitHub</a><span><Mail size={20} aria-hidden="true" />Email</span><span><Rss size={20} aria-hidden="true" />RSS</span></div></div></aside></section>;
 }
 
 function Gallery({ creations, setSelectedCreation }: { creations: Creation[]; setSelectedCreation: (creation: Creation) => void }) {
-  return <section className="content-band"><div className="gallery-head"><p>展示 AI 生成图像、视觉研究和界面设计作品，按项目归档。</p><span>03 PROJECTS</span></div><div className="gallery-grid">{creations.map((creation) => <button className="gallery-card" key={creation.title} onClick={() => setSelectedCreation(creation)}><img src={creation.image} alt={creation.title} /><div><span>{creation.type}</span><h2>{creation.title}</h2><p>{creation.description}</p></div></button>)}</div></section>;
+  return <section className="gallery-showcase"><div className="gallery-head"><p>展示 AI 生成图像、视觉研究和界面设计作品，按项目归档。</p><span>{String(creations.length).padStart(2, "0")} PROJECTS</span></div><div className="gallery-grid">{creations.map((creation) => <button className="gallery-card" key={creation.title} onClick={() => setSelectedCreation(creation)}><img src={creation.image} alt={creation.title} /><div><span>{creation.type}</span><h2>{creation.title}</h2><p>{creation.description}</p></div></button>)}</div></section>;
 }
 
 function Studio({ creations, setSelectedCreation }: { creations: Creation[]; setSelectedCreation: (creation: Creation) => void }) {
@@ -810,8 +849,8 @@ function ArticleReader({ article, close }: { article: Article; close: () => void
     <section className={`article-reader${closing ? " is-closing" : ""}`} aria-label="文章正文" aria-modal="true" role="dialog" ref={readerRef} tabIndex={-1}>
       <header className="article-reader-header"><button className="article-reader-back" onClick={requestClose} ref={backButtonRef}>← 返回文章</button></header>
       <article className="article-reader-content" ref={contentRef}>
-        <header className="article-reader-intro"><p>{article.category} · {article.series}</p><h1>{article.title}</h1><time>{article.date} · {article.readTime}</time></header>
-        <div className="markdown-content"><ReactMarkdown remarkPlugins={[remarkGfm]}>{article.content}</ReactMarkdown></div>
+        <header className="article-reader-intro"><p>{article.category} · {article.series}</p><h1>{article.title}</h1><div className="article-reader-meta"><time>{article.date}</time><span aria-hidden="true">·</span><span>{article.readTime}</span><span aria-hidden="true">·</span><span className="article-reader-views" aria-label={`浏览量 ${article.views.toLocaleString("zh-CN")}`}><Eye aria-hidden="true" size={15} strokeWidth={1.8} />{article.views.toLocaleString("zh-CN")}</span></div></header>
+        <div className="markdown-content"><ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>{article.content}</ReactMarkdown></div>
       </article>
       {headings.length > 1 && (
         <nav className={`article-outline${outlineOpen ? " is-open" : ""}`} aria-label="文章导览" ref={outlineRef}>
@@ -885,6 +924,48 @@ function CreationDrawer({ creation, close }: { creation: Creation; close: () => 
         <h2>{creation.title}</h2>
         <p className="drawer-copy">{creation.description}</p>
         <div className="demo-callout">作品详情、Prompt 和版本记录将在创作中心 API 接入后开放。</div>
+      </article>
+    </div>
+  );
+}
+
+function NoteDialog({ note, close }: { note: Note; close: () => void }) {
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const [closing, requestClose] = useAnimatedDismiss(close, 180);
+
+  useEffect(() => {
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const previousOverflow = document.body.style.overflow;
+    const backdrop = closeButtonRef.current?.closest<HTMLElement>(".drawer-backdrop") || null;
+    const restoreSiblings = backdrop ? hideModalSiblings(backdrop) : () => undefined;
+    const focusFrame = window.requestAnimationFrame(() => closeButtonRef.current?.focus({ preventScroll: true }));
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") requestClose();
+    };
+    const keepFocusInside = (event: KeyboardEvent) => {
+      if (backdrop) trapModalFocus(event, backdrop);
+    };
+
+    document.body.style.overflow = "hidden";
+    document.addEventListener("keydown", closeOnEscape);
+    document.addEventListener("keydown", keepFocusInside);
+    return () => {
+      window.cancelAnimationFrame(focusFrame);
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener("keydown", closeOnEscape);
+      document.removeEventListener("keydown", keepFocusInside);
+      restoreSiblings();
+      previousFocus?.focus({ preventScroll: true });
+    };
+  }, [requestClose]);
+
+  return (
+    <div className={`drawer-backdrop${closing ? " is-closing" : ""}`} onClick={requestClose}>
+      <article className="drawer note-dialog" aria-label={note.title} aria-modal="true" role="dialog" onClick={(event) => event.stopPropagation()}>
+        <button className="close-button" onClick={requestClose} aria-label="关闭" ref={closeButtonRef}>×</button>
+        <time>{note.date} / 2026</time>
+        <h2>{note.title}</h2>
+        <div className="note-dialog-content">{note.content.map((paragraph) => <p key={paragraph}>{paragraph}</p>)}</div>
       </article>
     </div>
   );
