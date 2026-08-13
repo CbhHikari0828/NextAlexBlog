@@ -1,6 +1,6 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
-import { ChevronLeft, ChevronRight, Eye, GitBranch, Mail, Rss } from "lucide-react";
+import { ArrowUpRight, ChevronDown, ChevronLeft, ChevronRight, Code2, Eye, GitBranch, GitFork, Mail, Rss, Star, Users } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
@@ -611,7 +611,7 @@ function App() {
   };
 
   return (
-    <main className={`app-shell${view === "home" ? " home-shell" : ""}${view === "articles" ? " articles-shell" : ""}${view === "notes" ? " notes-shell" : ""}${view === "gallery" ? " gallery-shell" : ""}${view === "guestbook" ? " guestbook-shell" : ""}`}>
+    <main className={`app-shell${view === "home" ? " home-shell" : ""}${view === "articles" ? " articles-shell" : ""}${view === "notes" ? " notes-shell" : ""}${view === "gallery" ? " gallery-shell" : ""}${view === "studio" ? " studio-shell" : ""}${view === "guestbook" ? " guestbook-shell" : ""}`}>
       {(copyNoticeVisible || developerToolsOpen) && <div className="developer-tools-notice" role="status">{copyNoticeVisible ? "复制已完成，转载请标明出处" : "开发者模式已打开，请遵循 GPL 协议"}</div>}
       <header className="site-header">
         <button className="brand" onClick={() => navigate("home")} aria-label="返回首页">
@@ -626,7 +626,7 @@ function App() {
           <button aria-current={view === "studio" ? "page" : undefined} className={view === "studio" ? "active" : ""} onClick={() => navigate("studio")}>创作中心</button>
           <button aria-current={view === "guestbook" ? "page" : undefined} className={view === "guestbook" ? "active" : ""} onClick={() => navigate("guestbook")}>留言板</button>
         </nav>
-        <span className={`api-pill api-pill-${apiState}`}><span />{apiState === "online" ? "在线" : apiState === "offline" ? "离线 Demo" : "连接中"}</span>
+        {view === "studio" ? <a className="studio-nav-github" href="https://github.com/CbhHikari0828/NextAlexBlog" target="_blank" rel="noreferrer" aria-label="在 GitHub 查看项目"><GitBranch size={21} strokeWidth={2.1} /></a> : <span className={`api-pill api-pill-${apiState}`}><span />{apiState === "online" ? "在线" : apiState === "offline" ? "离线 Demo" : "连接中"}</span>}
       </header>
 
       <div className={`page-stage page-stage-${view}`} key={`${view}-${viewSequence}`}>
@@ -649,8 +649,8 @@ function App() {
       {selectedCreation && <CreationDrawer creation={selectedCreation} close={() => setSelectedCreation((current) => current === selectedCreation ? null : current)} key={selectedCreation.title} />}
       {selectedNote && <NoteDialog note={selectedNote} close={() => setSelectedNote((current) => current === selectedNote ? null : current)} key={selectedNote.title} />}
 
-      <footer className={`site-footer${view === "notes" ? " notes-footer" : ""}`}>
-        {view === "notes" ? <><span>© {new Date().getFullYear()} Alex / Works. All rights reserved.</span><span>React · Gin · PostgreSQL</span></> : <><div className="footer-primary"><strong>NextAlex</strong><span>© {new Date().getFullYear()} NextAlex. All rights reserved.</span></div><div className="footer-meta"><span>Version 0.1.0</span><span>React · Gin · PostgreSQL</span></div><div className="footer-compliance"><span>ICP备案信息待配置</span><span>公安网备信息待配置</span></div></>}
+      <footer className={`site-footer${view === "notes" ? " notes-footer" : ""}${view === "studio" ? " studio-footer" : ""}`}>
+        {view === "notes" ? <><span>© {new Date().getFullYear()} Alex / Works. All rights reserved.</span><span>React · Gin · PostgreSQL</span></> : view === "studio" ? <><span>© {new Date().getFullYear()} Alex / Works</span><div className="studio-footer-links"><a href="https://github.com/CbhHikari0828/NextAlexBlog" target="_blank" rel="noreferrer" aria-label="GitHub"><GitBranch size={18} strokeWidth={2.1} /></a><i aria-hidden="true" /><a href="#rss">RSS</a></div></> : <><div className="footer-primary"><strong>NextAlex</strong><span>© {new Date().getFullYear()} NextAlex. All rights reserved.</span></div><div className="footer-meta"><span>Version 0.1.0</span><span>React · Gin · PostgreSQL</span></div><div className="footer-compliance"><span>ICP备案信息待配置</span><span>公安网备信息待配置</span></div></>}
       </footer>
     </main>
   );
@@ -716,7 +716,33 @@ function Gallery({ creations, setSelectedCreation }: { creations: Creation[]; se
 }
 
 function Studio({ creations, setSelectedCreation }: { creations: Creation[]; setSelectedCreation: (creation: Creation) => void }) {
-  return <section className="content-band studio-layout"><div className="studio-intro"><h2>AI 编程项目管理</h2><p>展示项目进度、作品类型和项目简介，后续将接入版本记录与项目详情。</p><button className="outline-action" onClick={() => setSelectedCreation(creations[1])}>查看最近项目</button></div><div className="project-list">{creations.map((creation, index) => <button className="project-row" key={creation.title} onClick={() => setSelectedCreation(creation)}><span>0{index + 1}</span><div><h3>{creation.title}</h3><p>{creation.type}</p></div><b style={{ color: creation.accent }}>{creation.state}</b><strong>↗</strong></button>)}</div></section>;
+  const contributionMonths = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug"];
+  const contributionWeeks = Array.from({ length: 36 }, (_, week) => Array.from({ length: 7 }, (_, day) => (week * 13 + day * 7 + week * day) % 5));
+  const projectStats = [{ stars: 32, forks: 8 }, { stars: 18, forks: 5 }, { stars: 24, forks: 3 }];
+
+  return <section className="studio-layout">
+    <div className="studio-overview">
+      <div className="studio-intro">
+        <p className="section-kicker">创作中心</p>
+        <h1>WORKS</h1>
+        <span className="studio-title-rule" aria-hidden="true" />
+        <div className="studio-stats">
+          <div><Code2 size={25} strokeWidth={1.8} /><strong>12</strong><span>Repositories</span></div>
+          <div><Star size={25} strokeWidth={1.8} /><strong>68</strong><span>Stars</span></div>
+          <div><GitFork size={25} strokeWidth={1.8} /><strong>15</strong><span>Forks</span></div>
+          <div><Users size={25} strokeWidth={1.8} /><strong>32</strong><span>Followers</span></div>
+        </div>
+        <div className="studio-actions"><a className="studio-action-primary" href="https://github.com/CbhHikari0828/NextAlexBlog" target="_blank" rel="noreferrer">View on GitHub <ArrowUpRight size={17} /></a><button className="studio-action-secondary" type="button" onClick={() => setSelectedCreation(creations[0])}>All Projects <ArrowUpRight size={17} /></button></div>
+      </div>
+      <section className="contribution-panel" aria-label="项目贡献记录">
+        <header><strong>CONTRIBUTIONS</strong><button type="button">2026 <ChevronDown size={16} /></button></header>
+        <div className="contribution-months">{contributionMonths.map((month) => <span key={month}>{month}</span>)}</div>
+        <div className="contribution-grid">{contributionWeeks.map((week, weekIndex) => <div className="contribution-week" key={weekIndex}>{week.map((level, dayIndex) => <i className={`contribution-cell contribution-level-${level}`} key={dayIndex} title={`${level} contributions`} />)}</div>)}</div>
+        <footer><span>Less</span><i className="contribution-cell contribution-level-0" /><i className="contribution-cell contribution-level-1" /><i className="contribution-cell contribution-level-2" /><i className="contribution-cell contribution-level-3" /><i className="contribution-cell contribution-level-4" /><span>More</span></footer>
+      </section>
+    </div>
+    <section className="studio-projects"><header><h2>PROJECTS</h2><span /><button type="button">VIEW ALL <ArrowUpRight size={17} /></button></header><div className="studio-project-grid">{creations.map((creation, index) => <button className="studio-project-card" key={creation.title} onClick={() => setSelectedCreation(creation)}><img src={creation.image} alt={creation.title} /><div className="studio-project-card-body"><h3>{creation.title}</h3><footer><span><Star size={16} />{projectStats[index]?.stars ?? 20}</span><span><GitFork size={16} />{projectStats[index]?.forks ?? 4}</span><ArrowUpRight size={19} /></footer></div></button>)}</div></section>
+  </section>;
 }
 
 function Guestbook({ visitor, message, setVisitor, setMessage, comments, submitMessage }: { visitor: string; message: string; setVisitor: (value: string) => void; setMessage: (value: string) => void; comments: GuestbookComment[]; submitMessage: (event: FormEvent<HTMLFormElement>, color: NoteColor) => void }) {
