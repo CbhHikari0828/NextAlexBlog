@@ -7,6 +7,41 @@ import remarkGfm from "remark-gfm";
 
 type View = "home" | "articles" | "notes" | "gallery" | "studio" | "guestbook";
 type ApiState = "checking" | "online" | "offline";
+type ContributionState = "loading" | "ready" | "unavailable";
+
+type GitHubContributionDay = {
+  date: string;
+  count: number;
+  level: number;
+};
+
+type GitHubContributions = {
+  username: string;
+  year: number;
+  total: number;
+  days: GitHubContributionDay[];
+};
+
+type RepositoryState = "loading" | "ready" | "unavailable";
+
+type GitHubRepository = {
+  name: string;
+  description: string;
+  htmlUrl: string;
+  language: string;
+  stars: number;
+  forks: number;
+  updatedAt: string;
+};
+
+type GitHubRepositories = {
+  username: string;
+  repositories: GitHubRepository[];
+};
+
+type ContributionCell = Omit<GitHubContributionDay, "date"> & {
+  date: string | null;
+};
 
 type Article = {
   title: string;
@@ -39,6 +74,8 @@ type Creation = {
   type: string;
   state: string;
   description: string;
+  model: string;
+  prompt: string;
   image: string;
   accent: string;
 };
@@ -60,6 +97,34 @@ type GuestbookComment = {
 const noteColors = ["ice", "mint", "lavender", "rose"] as const;
 type NoteColor = typeof noteColors[number];
 const articlesPerPage = 5;
+
+function buildContributionWeeks(year: number, days: GitHubContributionDay[]): ContributionCell[][] {
+  const daysByDate = new Map(days.map((day) => [day.date, day]));
+  const cursor = new Date(Date.UTC(year, 0, 1));
+  cursor.setUTCDate(cursor.getUTCDate() - cursor.getUTCDay());
+  const end = new Date(Date.UTC(year, 11, 31));
+  end.setUTCDate(end.getUTCDate() + 6 - end.getUTCDay());
+  const weeks: ContributionCell[][] = [];
+
+  while (cursor <= end) {
+    const week: ContributionCell[] = [];
+    for (let day = 0; day < 7; day += 1) {
+      const date = cursor.toISOString().slice(0, 10);
+      const contribution = daysByDate.get(date);
+      week.push(contribution ? { ...contribution } : { date: cursor.getUTCFullYear() === year ? date : null, count: 0, level: 0 });
+      cursor.setUTCDate(cursor.getUTCDate() + 1);
+    }
+    weeks.push(week);
+  }
+
+  return weeks;
+}
+
+function formatRepositoryDate(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return new Intl.DateTimeFormat("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit" }).format(date);
+}
 
 const prefersReducedMotion = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 const focusableSelector = "a[href], button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex='-1'])";
@@ -451,6 +516,8 @@ const creations: Creation[] = [
     type: "AI 视觉实验",
     state: "展出中",
     description: "以城市夜景为主题的 AI 生成图像系列。",
+    model: "Midjourney v6.1",
+    prompt: "rain-soaked cyberpunk street at night, neon magenta and cyan reflections, empty urban boulevard, cinematic wide angle, atmospheric haze, high contrast, detailed architecture, 35mm film still --ar 16:9 --stylize 250",
     image: "https://images.unsplash.com/photo-1519608487953-e999c86e7455?auto=format&fit=crop&w=1200&q=85",
     accent: "#ffffff",
   },
@@ -459,6 +526,8 @@ const creations: Creation[] = [
     type: "AI 编程作品",
     state: "迭代中",
     description: "用于管理提示词、版本记录和项目素材的交互式工具。",
+    model: "FLUX.1 Pro",
+    prompt: "ancient stone castle emerging from morning fog, quiet mountain valley, warm sunrise through the mist, weathered walls, cinematic landscape photography, soft natural light, restrained colors, highly detailed --ar 16:9",
     image: "https://images.unsplash.com/photo-1518709268805-4e9042af9f23?auto=format&fit=crop&w=1200&q=85",
     accent: "#7b9d82",
   },
@@ -467,6 +536,8 @@ const creations: Creation[] = [
     type: "交互原型",
     state: "已归档",
     description: "一场关于自动化和人类注意力的黑白界面练习。",
+    model: "SDXL 1.0",
+    prompt: "friendly white service robot in a contemporary research lab, close-up portrait, soft daylight, clean industrial display, precise material detail, documentary photography, neutral palette, shallow depth of field --ar 16:9",
     image: "https://images.unsplash.com/photo-1535378917042-10a22c95931a?auto=format&fit=crop&w=1200&q=85",
     accent: "#8a9aa5",
   },
@@ -483,6 +554,11 @@ const categories = ["全部文章", "Java 并发编程", "JUC 基础", "异步�
 function App() {
   const [view, setView] = useState<View>("home");
   const [apiState, setApiState] = useState<ApiState>("checking");
+  const contributionYear = new Date().getFullYear();
+  const [githubContributions, setGithubContributions] = useState<GitHubContributions | null>(null);
+  const [contributionState, setContributionState] = useState<ContributionState>("loading");
+  const [githubRepositories, setGithubRepositories] = useState<GitHubRepositories | null>(null);
+  const [repositoryState, setRepositoryState] = useState<RepositoryState>("loading");
   const [developerToolsOpen, setDeveloperToolsOpen] = useState(false);
   const [copyNoticeVisible, setCopyNoticeVisible] = useState(false);
   const [activeCategory, setActiveCategory] = useState("全部文章");
@@ -514,6 +590,48 @@ function App() {
         setApiState("online");
       })
       .catch(() => setApiState("offline"));
+  }, []);
+
+  useEffect(() => {
+    const controller = new AbortController();
+
+    fetch(`/api/github/contributions?year=${contributionYear}`, { signal: controller.signal })
+      .then((response) => {
+        if (!response.ok) throw new Error("GitHub contribution request failed");
+        return response.json() as Promise<GitHubContributions>;
+      })
+      .then((data) => {
+        if (!data.username || data.year !== contributionYear || !Array.isArray(data.days)) throw new Error("Invalid GitHub contribution response");
+        setGithubContributions(data);
+        setContributionState("ready");
+      })
+      .catch((error: unknown) => {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        setContributionState("unavailable");
+      });
+
+    return () => controller.abort();
+  }, [contributionYear]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+
+    fetch("/api/github/repositories?limit=3", { signal: controller.signal })
+      .then((response) => {
+        if (!response.ok) throw new Error("GitHub repository request failed");
+        return response.json() as Promise<GitHubRepositories>;
+      })
+      .then((data) => {
+        if (!data.username || !Array.isArray(data.repositories)) throw new Error("Invalid GitHub repository response");
+        setGithubRepositories(data);
+        setRepositoryState("ready");
+      })
+      .catch((error: unknown) => {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        setRepositoryState("unavailable");
+      });
+
+    return () => controller.abort();
   }, []);
 
   useEffect(() => {
@@ -626,7 +744,7 @@ function App() {
           <button aria-current={view === "studio" ? "page" : undefined} className={view === "studio" ? "active" : ""} onClick={() => navigate("studio")}>创作中心</button>
           <button aria-current={view === "guestbook" ? "page" : undefined} className={view === "guestbook" ? "active" : ""} onClick={() => navigate("guestbook")}>留言板</button>
         </nav>
-        {view === "studio" ? <a className="studio-nav-github" href="https://github.com/CbhHikari0828/NextAlexBlog" target="_blank" rel="noreferrer" aria-label="在 GitHub 查看项目"><GitBranch size={21} strokeWidth={2.1} /></a> : <span className={`api-pill api-pill-${apiState}`}><span />{apiState === "online" ? "在线" : apiState === "offline" ? "离线 Demo" : "连接中"}</span>}
+        <span className={`api-pill api-pill-${apiState}`}><span />{apiState === "online" ? "在线" : apiState === "offline" ? "离线 Demo" : "连接中"}</span>
       </header>
 
       <div className={`page-stage page-stage-${view}`} key={`${view}-${viewSequence}`}>
@@ -635,13 +753,13 @@ function App() {
           <p className="intro-copy">汇集 Java 技术文章、阅读笔记、AI 图像作品和 AI 编程项目。</p>
         </section>}
 
-        {view === "home" && <Home navigate={navigate} setSelectedCreation={openCreation} setSelectedArticle={openArticle} />}
+        {view === "home" && <Home navigate={navigate} setSelectedArticle={openArticle} repositories={githubRepositories} repositoryState={repositoryState} />}
         {view === "articles" && (
           <Articles activeCategory={activeCategory} setActiveCategory={selectArticleCategory} paginatedArticles={paginatedArticles} articlePage={visibleArticlePage} articlePageCount={articlePageCount} setArticlePage={setArticlePage} setSelectedArticle={openArticle} />
         )}
         {view === "notes" && <Notes setSelectedNote={openNote} />}
         {view === "gallery" && <Gallery creations={creations} setSelectedCreation={openCreation} />}
-        {view === "studio" && <Studio creations={creations} setSelectedCreation={openCreation} />}
+        {view === "studio" && <Studio contributions={githubContributions} contributionState={contributionState} repositories={githubRepositories} repositoryState={repositoryState} />}
         {view === "guestbook" && <Guestbook visitor={visitor} message={message} setVisitor={setVisitor} setMessage={setMessage} comments={comments} submitMessage={submitMessage} />}
       </div>
 
@@ -656,9 +774,10 @@ function App() {
   );
 }
 
-function Home({ navigate, setSelectedCreation, setSelectedArticle }: { navigate: (view: View) => void; setSelectedCreation: (creation: Creation) => void; setSelectedArticle: (article: Article) => void }) {
+function Home({ navigate, setSelectedArticle, repositories, repositoryState }: { navigate: (view: View) => void; setSelectedArticle: (article: Article) => void; repositories: GitHubRepositories | null; repositoryState: RepositoryState }) {
   const profileName = "NextAlex";
   const [displayedName, setDisplayedName] = useState("");
+  const projects = repositories?.repositories ?? [];
 
   useEffect(() => {
     let nextCharacter = 0;
@@ -695,7 +814,7 @@ function Home({ navigate, setSelectedCreation, setSelectedArticle }: { navigate:
         <div className="recent-list">{articles.slice(0, 3).map((article, index) => <button className="recent-article" key={article.title} onClick={() => setSelectedArticle(article)}><span className="recent-index">0{index + 1}</span><div><p>{article.category} / {article.series}</p><h3>{article.title}</h3><span>{article.excerpt}</span></div><aside><time>{article.date}</time><small>{article.readTime}</small><b>↗</b></aside></button>)}</div>
       </section>
       <section className="home-lower home-content">
-        <div><div className="section-heading compact"><div><h2>创作项目</h2></div><button className="text-action" onClick={() => navigate("studio")}>进入创作中心 <span>↗</span></button></div><div className="creation-strip">{creations.slice(1, 3).map((creation) => <button className="creation-card" key={creation.title} onClick={() => setSelectedCreation(creation)}><img src={creation.image} alt={creation.title} /><span className="creation-meta"><strong>{creation.title}</strong><small>{creation.type} · {creation.state}</small></span></button>)}</div></div>
+        <div><div className="section-heading compact"><div><h2>创作项目</h2></div><button className="text-action" onClick={() => navigate("studio")}>进入创作中心 <span>↗</span></button></div><div className="home-project-grid">{repositoryState === "ready" && projects.length > 0 ? projects.slice(0, 2).map((project) => <RepositoryProjectCard className="home-project-card" key={project.htmlUrl} project={project} username={repositories?.username || "GitHub"} />) : <p className="home-project-empty">{repositoryState === "loading" ? "正在同步 GitHub 项目" : "GitHub 项目暂不可用"}</p>}</div></div>
         <aside className="guestbook-tease"><h2>笔记与留言</h2><p>查看最新笔记，或提交对文章和创作项目的反馈。</p><div className="tease-actions"><button className="outline-action" onClick={() => navigate("notes")}>查看笔记</button><button className="outline-action" onClick={() => navigate("guestbook")}>进入留言板</button></div></aside>
       </section>
       </div>
@@ -712,13 +831,37 @@ function Notes({ setSelectedNote }: { setSelectedNote: (note: Note) => void }) {
 }
 
 function Gallery({ creations, setSelectedCreation }: { creations: Creation[]; setSelectedCreation: (creation: Creation) => void }) {
-  return <section className="gallery-showcase"><div className="gallery-head"><p>展示 AI 生成图像、视觉研究和界面设计作品，按项目归档。</p><span>{String(creations.length).padStart(2, "0")} PROJECTS</span></div><div className="gallery-grid">{creations.map((creation) => <button className="gallery-card" key={creation.title} onClick={() => setSelectedCreation(creation)}><img src={creation.image} alt={creation.title} /><div><span>{creation.type}</span><h2>{creation.title}</h2><p>{creation.description}</p></div></button>)}</div></section>;
+  return <section className="gallery-showcase"><div className="gallery-head"><p>展示 AI 生成图像、视觉研究和界面设计作品，按项目归档。</p><span>{String(creations.length).padStart(2, "0")} PROJECTS</span></div><div className="gallery-grid">{creations.map((creation) => <GalleryDisclosureCard creation={creation} key={creation.title} setSelectedCreation={setSelectedCreation} />)}</div></section>;
 }
 
-function Studio({ creations, setSelectedCreation }: { creations: Creation[]; setSelectedCreation: (creation: Creation) => void }) {
-  const contributionMonths = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug"];
-  const contributionWeeks = Array.from({ length: 36 }, (_, week) => Array.from({ length: 7 }, (_, day) => (week * 13 + day * 7 + week * day) % 5));
-  const projectStats = [{ stars: 32, forks: 8 }, { stars: 18, forks: 5 }, { stars: 24, forks: 3 }];
+function GalleryDisclosureCard({ creation, setSelectedCreation }: { creation: Creation; setSelectedCreation: (creation: Creation) => void }) {
+  const [isOpen, setIsOpen] = useState(false);
+  const toggleOpen = () => setIsOpen((open) => !open);
+
+  return <article className={`gallery-card${isOpen ? " is-open" : ""}`}>
+    <button className="gallery-card-image" type="button" onClick={toggleOpen} aria-label={`${isOpen ? "收起" : "展开"}${creation.title}`} aria-expanded={isOpen}>
+      <img src={creation.image} alt={creation.title} />
+    </button>
+    <div className="gallery-card-disclosure">
+      <button className="gallery-card-trigger" type="button" onClick={toggleOpen} aria-expanded={isOpen}>
+        <span><strong>{creation.title}</strong><small>模型 / {creation.model}</small></span><ChevronDown aria-hidden="true" size={18} />
+      </button>
+      <div className="gallery-card-content" aria-hidden={!isOpen}>
+        <div><div className="gallery-card-prompt"><span>提示词</span><p>{creation.prompt}</p></div><button type="button" tabIndex={isOpen ? 0 : -1} onClick={() => setSelectedCreation(creation)}>查看详情 <ArrowUpRight size={16} aria-hidden="true" /></button></div>
+      </div>
+    </div>
+  </article>;
+}
+
+function RepositoryProjectCard({ project, username, className = "" }: { project: GitHubRepository; username: string; className?: string }) {
+  return <a className={`studio-project-card${className ? ` ${className}` : ""}`} href={project.htmlUrl} target="_blank" rel="noreferrer"><div className="studio-project-preview" aria-hidden="true"><span>{username} /</span><strong>{project.name}</strong><GitBranch size={24} strokeWidth={1.8} /></div><div className="studio-project-card-body"><span>{project.language || "Repository"}</span><h3>{project.name}</h3><p>{project.description || "暂无项目说明"}</p><footer><span><Star size={16} />{project.stars}</span><span><GitFork size={16} />{project.forks}</span><time dateTime={project.updatedAt}>{formatRepositoryDate(project.updatedAt)}</time><ArrowUpRight size={19} /></footer></div></a>;
+}
+
+function Studio({ contributions, contributionState, repositories, repositoryState }: { contributions: GitHubContributions | null; contributionState: ContributionState; repositories: GitHubRepositories | null; repositoryState: RepositoryState }) {
+  const contributionYear = contributions?.year ?? new Date().getFullYear();
+  const contributionMonths = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  const contributionWeeks = buildContributionWeeks(contributionYear, contributions?.days ?? []);
+  const projects = repositories?.repositories ?? [];
 
   return <section className="studio-layout">
     <div className="studio-overview">
@@ -732,16 +875,16 @@ function Studio({ creations, setSelectedCreation }: { creations: Creation[]; set
           <div><GitFork size={25} strokeWidth={1.8} /><strong>15</strong><span>Forks</span></div>
           <div><Users size={25} strokeWidth={1.8} /><strong>32</strong><span>Followers</span></div>
         </div>
-        <div className="studio-actions"><a className="studio-action-primary" href="https://github.com/CbhHikari0828/NextAlexBlog" target="_blank" rel="noreferrer">View on GitHub <ArrowUpRight size={17} /></a><button className="studio-action-secondary" type="button" onClick={() => setSelectedCreation(creations[0])}>All Projects <ArrowUpRight size={17} /></button></div>
+        <div className="studio-actions"><a className="studio-action-primary" href="https://github.com/CbhHikari0828/NextAlexBlog" target="_blank" rel="noreferrer">View on GitHub <ArrowUpRight size={17} /></a><a className="studio-action-secondary" href="https://github.com/CbhHikari0828?tab=repositories" target="_blank" rel="noreferrer">All Projects <ArrowUpRight size={17} /></a></div>
       </div>
       <section className="contribution-panel" aria-label="项目贡献记录">
-        <header><strong>CONTRIBUTIONS</strong><button type="button">2026 <ChevronDown size={16} /></button></header>
+        <header><strong>GITHUB CONTRIBUTIONS</strong><a href="https://github.com/CbhHikari0828" target="_blank" rel="noreferrer">{contributionYear} <ChevronDown size={16} /></a></header>
         <div className="contribution-months">{contributionMonths.map((month) => <span key={month}>{month}</span>)}</div>
-        <div className="contribution-grid">{contributionWeeks.map((week, weekIndex) => <div className="contribution-week" key={weekIndex}>{week.map((level, dayIndex) => <i className={`contribution-cell contribution-level-${level}`} key={dayIndex} title={`${level} contributions`} />)}</div>)}</div>
-        <footer><span>Less</span><i className="contribution-cell contribution-level-0" /><i className="contribution-cell contribution-level-1" /><i className="contribution-cell contribution-level-2" /><i className="contribution-cell contribution-level-3" /><i className="contribution-cell contribution-level-4" /><span>More</span></footer>
+        <div className="contribution-grid">{contributionWeeks.map((week, weekIndex) => <div className="contribution-week" key={weekIndex}>{week.map((cell, dayIndex) => <i className={`contribution-cell contribution-level-${cell.level}${cell.date ? "" : " contribution-cell-outside"}`} key={dayIndex} title={cell.date ? `${cell.date}: ${cell.count} contributions` : undefined} />)}</div>)}</div>
+        <footer><span>{contributionState === "ready" ? `${contributions?.total ?? 0} contributions` : contributionState === "loading" ? "Loading GitHub data" : "GitHub data unavailable"}</span><i className="contribution-cell contribution-level-0" /><i className="contribution-cell contribution-level-1" /><i className="contribution-cell contribution-level-2" /><i className="contribution-cell contribution-level-3" /><i className="contribution-cell contribution-level-4" /></footer>
       </section>
     </div>
-    <section className="studio-projects"><header><h2>PROJECTS</h2><span /><button type="button">VIEW ALL <ArrowUpRight size={17} /></button></header><div className="studio-project-grid">{creations.map((creation, index) => <button className="studio-project-card" key={creation.title} onClick={() => setSelectedCreation(creation)}><img src={creation.image} alt={creation.title} /><div className="studio-project-card-body"><h3>{creation.title}</h3><footer><span><Star size={16} />{projectStats[index]?.stars ?? 20}</span><span><GitFork size={16} />{projectStats[index]?.forks ?? 4}</span><ArrowUpRight size={19} /></footer></div></button>)}</div></section>
+    <section className="studio-projects"><header><h2>PROJECTS</h2><span /><a href="https://github.com/CbhHikari0828?tab=repositories" target="_blank" rel="noreferrer">VIEW ALL <ArrowUpRight size={17} /></a></header><div className="studio-project-grid">{repositoryState === "ready" && projects.length > 0 ? projects.map((project) => <RepositoryProjectCard key={project.htmlUrl} project={project} username={repositories?.username || "GitHub"} />) : <p className="studio-project-empty">{repositoryState === "loading" ? "正在同步 GitHub 项目" : "GitHub 项目暂不可用"}</p>}</div></section>
   </section>;
 }
 
@@ -948,8 +1091,7 @@ function CreationDrawer({ creation, close }: { creation: Creation; close: () => 
         <img src={creation.image} alt={creation.title} />
         <p className="section-kicker">{creation.type} / {creation.state}</p>
         <h2>{creation.title}</h2>
-        <p className="drawer-copy">{creation.description}</p>
-        <div className="demo-callout">作品详情、Prompt 和版本记录将在创作中心 API 接入后开放。</div>
+        <dl className="creation-prompt"><div><dt>模型</dt><dd>{creation.model}</dd></div><div><dt>完整提示词</dt><dd>{creation.prompt}</dd></div></dl>
       </article>
     </div>
   );

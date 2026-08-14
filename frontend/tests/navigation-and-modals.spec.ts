@@ -130,8 +130,11 @@ test.describe("页面切换和弹窗交互", () => {
   test("创作弹窗将 Tab 留在弹窗内并在 Escape 后还原触发按钮", async ({ page }) => {
     await page.goto("/");
 
-    const creationTrigger = page.locator(".creation-card").first();
+    await page.locator(".main-nav").getByRole("button", { name: "创作图库", exact: true }).click();
+    const creationTrigger = page.locator(".gallery-card-image").first();
     await creationTrigger.click();
+    const detailTrigger = page.locator(".gallery-card-content button").first();
+    await detailTrigger.click();
 
     const backdrop = page.locator(".drawer-backdrop");
     const closeButton = page.locator(".close-button");
@@ -145,6 +148,6 @@ test.describe("页面切换和弹窗交互", () => {
 
     await page.keyboard.press("Escape");
     await expect(backdrop).toHaveCount(0);
-    await expect(creationTrigger).toBeFocused();
+    await expect(detailTrigger).toBeFocused();
   });
 });

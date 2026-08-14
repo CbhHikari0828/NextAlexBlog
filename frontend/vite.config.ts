@@ -16,7 +16,7 @@ export default defineConfig(({ mode }) => {
       },
       proxy: {
         "/api": {
-          target: env.BACKEND_URL || "http://host.docker.internal:8080",
+          target: env.BACKEND_URL || "http://host.docker.internal:8090",
           changeOrigin: true,
         },
       },
