@@ -4,6 +4,7 @@ import { ArrowUpRight, ChevronDown, ChevronLeft, ChevronRight, Code2, Eye, GitBr
 import ReactMarkdown from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
+import AdminApp from "./AdminApp";
 
 type View = "home" | "articles" | "notes" | "gallery" | "studio" | "guestbook";
 type ApiState = "checking" | "online" | "offline";
@@ -552,6 +553,10 @@ const notes: Note[] = [
 const categories = ["全部文章", "Java 并发编程", "JUC 基础", "异步工具箱", "后端实践", "系统设计"];
 
 function App() {
+  return window.location.pathname.startsWith("/admin") ? <AdminApp /> : <PublicApp />;
+}
+
+function PublicApp() {
   const [view, setView] = useState<View>("home");
   const [apiState, setApiState] = useState<ApiState>("checking");
   const contributionYear = new Date().getFullYear();
