@@ -3,6 +3,8 @@
 # Frontend
 frontend/node_modules/
 frontend/dist/
+frontend/test-results/
+frontend/frontend/
 
 # Go
 backend/bin/

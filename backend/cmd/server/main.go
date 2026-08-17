@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -11,12 +12,14 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/net/html"
 )
@@ -24,6 +27,7 @@ import (
 const githubContributionCacheDuration = 15 * time.Minute
 
 var contributionCountPattern = regexp.MustCompile(`([0-9][0-9,]*)\s+contribution`)
+var steamIDPattern = regexp.MustCompile(`^\d{17}$`)
 
 type contributionDay struct {
 	Date  string `json:"date"`
@@ -77,17 +81,118 @@ type repositoryCache struct {
 	entries map[string]repositoryCacheEntry
 }
 
+type steamProfile struct {
+	SteamID      string `json:"steamId"`
+	Name         string `json:"name"`
+	ProfileURL   string `json:"profileUrl"`
+	AvatarURL    string `json:"avatarUrl"`
+	PersonaState int    `json:"personaState"`
+}
+
+type steamGame struct {
+	AppID           int    `json:"appId"`
+	Name            string `json:"name"`
+	PlaytimeForever int    `json:"playtimeForever"`
+	Playtime2Weeks  int    `json:"playtime2Weeks"`
+}
+
+type steamAPIGame struct {
+	AppID           int    `json:"appid"`
+	Name            string `json:"name"`
+	PlaytimeForever int    `json:"playtime_forever"`
+	Playtime2Weeks  int    `json:"playtime_2weeks"`
+}
+
+type steamOverview struct {
+	Profile        steamProfile `json:"profile"`
+	GameCount      int          `json:"gameCount"`
+	TotalPlaytime  int          `json:"totalPlaytime"`
+	Games          []steamGame  `json:"games"`
+	RecentlyPlayed []steamGame  `json:"recentlyPlayed"`
+}
+
+type steamOverviewResponse struct {
+	Profile        steamProfile `json:"profile"`
+	GameCount      int          `json:"gameCount"`
+	TotalPlaytime  int          `json:"totalPlaytime"`
+	Games          []steamGame  `json:"games"`
+	RecentlyPlayed []steamGame  `json:"recentlyPlayed"`
+	RefreshedAt    time.Time    `json:"refreshedAt"`
+}
+
+type steamOverviewStore interface {
+	LoadSteamOverview(context.Context) (steamOverview, time.Time, error)
+	SaveSteamOverview(context.Context, steamOverview) (time.Time, error)
+}
+
+type postgresSteamOverviewStore struct {
+	pool *pgxpool.Pool
+}
+
+var errSteamOverviewNotFound = errors.New("Steam overview snapshot not found")
+
+func (store postgresSteamOverviewStore) LoadSteamOverview(ctx context.Context) (steamOverview, time.Time, error) {
+	var payload []byte
+	var refreshedAt time.Time
+	err := store.pool.QueryRow(ctx, `SELECT payload, refreshed_at FROM steam_overview_snapshots WHERE id = 1`).Scan(&payload, &refreshedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return steamOverview{}, time.Time{}, errSteamOverviewNotFound
+	}
+	if err != nil {
+		return steamOverview{}, time.Time{}, fmt.Errorf("load Steam overview snapshot: %w", err)
+	}
+
+	var overview steamOverview
+	if err := json.Unmarshal(payload, &overview); err != nil {
+		return steamOverview{}, time.Time{}, fmt.Errorf("decode Steam overview snapshot: %w", err)
+	}
+	return overview, refreshedAt, nil
+}
+
+func (store postgresSteamOverviewStore) SaveSteamOverview(ctx context.Context, overview steamOverview) (time.Time, error) {
+	payload, err := json.Marshal(overview)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("encode Steam overview snapshot: %w", err)
+	}
+
+	var refreshedAt time.Time
+	err = store.pool.QueryRow(ctx, `
+		INSERT INTO steam_overview_snapshots (id, payload, refreshed_at)
+		VALUES (1, $1::jsonb, NOW())
+		ON CONFLICT (id) DO UPDATE SET payload = EXCLUDED.payload, refreshed_at = NOW()
+		RETURNING refreshed_at
+	`, string(payload)).Scan(&refreshedAt)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("save Steam overview snapshot: %w", err)
+	}
+	return refreshedAt, nil
+}
+
+func steamOverviewResponseFrom(overview steamOverview, refreshedAt time.Time) steamOverviewResponse {
+	return steamOverviewResponse{
+		Profile:        overview.Profile,
+		GameCount:      overview.GameCount,
+		TotalPlaytime:  overview.TotalPlaytime,
+		Games:          overview.Games,
+		RecentlyPlayed: overview.RecentlyPlayed,
+		RefreshedAt:    refreshedAt,
+	}
+}
+
 func newRepositoryCache() *repositoryCache {
 	return &repositoryCache{entries: make(map[string]repositoryCacheEntry)}
 }
 
 func main() {
+	loadLocalEnvironment()
 	databaseURL := envOrDefault(
 		"DATABASE_URL",
 		"postgres://blog:blog_dev_password@localhost:55432/blog?sslmode=disable",
 	)
 	port := envOrDefault("BACKEND_PORT", "8090")
 	githubUsername := envOrDefault("GITHUB_USERNAME", "CbhHikari0828")
+	steamAPIKey := strings.TrimSpace(os.Getenv("STEAM_WEB_API_KEY"))
+	steamID := strings.TrimSpace(os.Getenv("STEAM_ID"))
 
 	pool, err := pgxpool.New(context.Background(), databaseURL)
 	if err != nil {
@@ -99,6 +204,9 @@ func main() {
 	defer cancel()
 	if err := pool.Ping(pingContext); err != nil {
 		log.Fatalf("connect to database: %v", err)
+	}
+	if err := ensureSteamOverviewSnapshotTable(context.Background(), pool); err != nil {
+		log.Fatalf("ensure Steam overview snapshot table: %v", err)
 	}
 
 	router := gin.New()
@@ -115,6 +223,9 @@ func main() {
 		githubUsername,
 		newRepositoryCache(),
 	))
+	steamStore := postgresSteamOverviewStore{pool: pool}
+	router.GET("/api/steam/overview", steamOverviewHandler(steamStore))
+	router.POST("/api/admin/steam/refresh", steamRefreshHandler(githubClient, steamAPIKey, steamID, steamStore))
 
 	server := &http.Server{
 		Addr:              ":" + port,
@@ -180,12 +291,14 @@ func githubRepositoriesHandler(client *http.Client, username string, cache *repo
 		}
 
 		cacheKey := fmt.Sprintf("%s:%d", username, limit)
-		cache.mu.Lock()
-		entry, found := cache.entries[cacheKey]
-		cache.mu.Unlock()
-		if found && time.Now().Before(entry.expiresAt) {
-			c.JSON(http.StatusOK, entry.data)
-			return
+		if c.Query("refresh") != "1" {
+			cache.mu.Lock()
+			entry, found := cache.entries[cacheKey]
+			cache.mu.Unlock()
+			if found && time.Now().Before(entry.expiresAt) {
+				c.JSON(http.StatusOK, entry.data)
+				return
+			}
 		}
 
 		repositories, err := fetchGitHubRepositories(c.Request.Context(), client, username, limit)
@@ -204,6 +317,188 @@ func githubRepositoriesHandler(client *http.Client, username string, cache *repo
 
 		c.JSON(http.StatusOK, repositories)
 	}
+}
+
+func ensureSteamOverviewSnapshotTable(ctx context.Context, pool *pgxpool.Pool) error {
+	_, err := pool.Exec(ctx, `
+		CREATE TABLE IF NOT EXISTS steam_overview_snapshots (
+			id SMALLINT PRIMARY KEY CHECK (id = 1),
+			payload JSONB NOT NULL,
+			refreshed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)
+	`)
+	return err
+}
+
+func steamOverviewHandler(store steamOverviewStore) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		overview, refreshedAt, err := store.LoadSteamOverview(c.Request.Context())
+		if errors.Is(err, errSteamOverviewNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Steam data has not been refreshed yet"})
+			return
+		}
+		if err != nil {
+			log.Printf("load Steam overview snapshot: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Steam data is temporarily unavailable"})
+			return
+		}
+
+		c.JSON(http.StatusOK, steamOverviewResponseFrom(overview, refreshedAt))
+	}
+}
+
+func steamRefreshHandler(client *http.Client, apiKey string, steamID string, store steamOverviewStore) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if apiKey == "" || steamID == "" {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Steam integration is not configured"})
+			return
+		}
+
+		overview, err := fetchSteamOverview(c.Request.Context(), client, apiKey, steamID)
+		if err != nil {
+			log.Printf("refresh Steam overview: %v", err)
+			c.JSON(http.StatusBadGateway, gin.H{"error": "Steam data is temporarily unavailable"})
+			return
+		}
+
+		refreshedAt, err := store.SaveSteamOverview(c.Request.Context(), overview)
+		if err != nil {
+			log.Printf("save Steam overview snapshot: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Steam data could not be saved"})
+			return
+		}
+
+		c.JSON(http.StatusOK, steamOverviewResponseFrom(overview, refreshedAt))
+	}
+}
+
+func fetchSteamOverview(ctx context.Context, client *http.Client, apiKey string, steamID string) (steamOverview, error) {
+	type playerSummary struct {
+		Response struct {
+			Players []struct {
+				SteamID      string `json:"steamid"`
+				PersonaName  string `json:"personaname"`
+				ProfileURL   string `json:"profileurl"`
+				AvatarFull   string `json:"avatarfull"`
+				PersonaState int    `json:"personastate"`
+			} `json:"players"`
+		} `json:"response"`
+	}
+	type ownedGames struct {
+		Response struct {
+			GameCount int            `json:"game_count"`
+			Games     []steamAPIGame `json:"games"`
+		} `json:"response"`
+	}
+	type recentlyPlayedGames struct {
+		Response struct {
+			Games []steamAPIGame `json:"games"`
+		} `json:"response"`
+	}
+
+	resolvedSteamID, err := resolveSteamID(ctx, client, apiKey, steamID)
+	if err != nil {
+		return steamOverview{}, err
+	}
+
+	query := url.Values{"key": {apiKey}, "steamid": {resolvedSteamID}}
+	var summary playerSummary
+	if err := steamGetJSON(ctx, client, "https://api.steampowered.com/ISteamUser/GetPlayerSummaries/v0002/?"+url.Values{"key": {apiKey}, "steamids": {resolvedSteamID}}.Encode(), &summary); err != nil {
+		return steamOverview{}, err
+	}
+	if len(summary.Response.Players) == 0 {
+		return steamOverview{}, fmt.Errorf("Steam player not found")
+	}
+
+	var owned ownedGames
+	ownedURL := "https://api.steampowered.com/IPlayerService/GetOwnedGames/v0001/?" + withSteamGameOptions(query).Encode()
+	if err := steamGetJSON(ctx, client, ownedURL, &owned); err != nil {
+		return steamOverview{}, err
+	}
+
+	var recent recentlyPlayedGames
+	recentURL := "https://api.steampowered.com/IPlayerService/GetRecentlyPlayedGames/v0001/?" + query.Encode()
+	if err := steamGetJSON(ctx, client, recentURL, &recent); err != nil {
+		return steamOverview{}, err
+	}
+
+	totalPlaytime := 0
+	for _, game := range owned.Response.Games {
+		totalPlaytime += game.PlaytimeForever
+	}
+	sort.Slice(owned.Response.Games, func(left int, right int) bool {
+		return owned.Response.Games[left].PlaytimeForever > owned.Response.Games[right].PlaytimeForever
+	})
+	player := summary.Response.Players[0]
+	return steamOverview{
+		Profile:        steamProfile{SteamID: player.SteamID, Name: player.PersonaName, ProfileURL: player.ProfileURL, AvatarURL: player.AvatarFull, PersonaState: player.PersonaState},
+		GameCount:      owned.Response.GameCount,
+		TotalPlaytime:  totalPlaytime,
+		Games:          toSteamGames(owned.Response.Games),
+		RecentlyPlayed: toSteamGames(recent.Response.Games),
+	}, nil
+}
+
+func resolveSteamID(ctx context.Context, client *http.Client, apiKey string, identifier string) (string, error) {
+	if steamIDPattern.MatchString(identifier) {
+		return identifier, nil
+	}
+
+	type vanityResponse struct {
+		Response struct {
+			Success int    `json:"success"`
+			SteamID string `json:"steamid"`
+		} `json:"response"`
+	}
+	var response vanityResponse
+	endpoint := "https://api.steampowered.com/ISteamUser/ResolveVanityURL/v0001/?" + url.Values{"key": {apiKey}, "vanityurl": {identifier}}.Encode()
+	if err := steamGetJSON(ctx, client, endpoint, &response); err != nil {
+		return "", err
+	}
+	if response.Response.Success != 1 || !steamIDPattern.MatchString(response.Response.SteamID) {
+		return "", fmt.Errorf("Steam vanity URL could not be resolved")
+	}
+	return response.Response.SteamID, nil
+}
+
+func toSteamGames(games []steamAPIGame) []steamGame {
+	normalizedGames := make([]steamGame, 0, len(games))
+	for _, game := range games {
+		normalizedGames = append(normalizedGames, steamGame{AppID: game.AppID, Name: game.Name, PlaytimeForever: game.PlaytimeForever, Playtime2Weeks: game.Playtime2Weeks})
+	}
+	return normalizedGames
+}
+
+func withSteamGameOptions(query url.Values) url.Values {
+	withOptions := url.Values{}
+	for key, values := range query {
+		withOptions[key] = append([]string(nil), values...)
+	}
+	withOptions.Set("include_appinfo", "1")
+	withOptions.Set("include_played_free_games", "1")
+	return withOptions
+}
+
+func steamGetJSON(ctx context.Context, client *http.Client, endpoint string, target any) error {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return fmt.Errorf("create Steam request: %w", err)
+	}
+	request.Header.Set("Accept", "application/json")
+	request.Header.Set("User-Agent", "NextAlexBlog/1.0")
+
+	response, err := client.Do(request)
+	if err != nil {
+		return fmt.Errorf("request Steam API: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return fmt.Errorf("Steam returned %s", response.Status)
+	}
+	if err := json.NewDecoder(io.LimitReader(response.Body, 4<<20)).Decode(target); err != nil {
+		return fmt.Errorf("decode Steam response: %w", err)
+	}
+	return nil
 }
 
 func fetchGitHubRepositories(ctx context.Context, client *http.Client, username string, limit int) (githubRepositories, error) {
@@ -402,4 +697,26 @@ func envOrDefault(key string, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func loadLocalEnvironment() {
+	for _, filename := range []string{".env", "../.env"} {
+		file, err := os.Open(filename)
+		if err != nil {
+			continue
+		}
+
+		scanner := bufio.NewScanner(file)
+		for scanner.Scan() {
+			key, value, found := strings.Cut(strings.TrimSpace(scanner.Text()), "=")
+			if !found || key == "" || strings.HasPrefix(key, "#") {
+				continue
+			}
+			if _, configured := os.LookupEnv(key); !configured {
+				_ = os.Setenv(key, strings.Trim(strings.TrimSpace(value), `"`))
+			}
+		}
+		_ = file.Close()
+		return
+	}
 }

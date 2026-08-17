@@ -6,9 +6,19 @@ import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
 import AdminApp from "./AdminApp";
 
-type View = "home" | "articles" | "notes" | "gallery" | "studio" | "guestbook";
+type View = "home" | "articles" | "notes" | "gallery" | "studio" | "entertainment" | "guestbook";
 type ApiState = "checking" | "online" | "offline";
 type ContributionState = "loading" | "ready" | "unavailable";
+
+const publicNavItems: { view: View; label: string }[] = [
+  { view: "home", label: "主页" },
+  { view: "articles", label: "文章" },
+  { view: "notes", label: "笔记" },
+  { view: "gallery", label: "创作图库" },
+  { view: "studio", label: "创作中心" },
+  { view: "entertainment", label: "娱乐" },
+  { view: "guestbook", label: "留言板" },
+];
 
 type GitHubContributionDay = {
   date: string;
@@ -24,6 +34,7 @@ type GitHubContributions = {
 };
 
 type RepositoryState = "loading" | "ready" | "unavailable";
+type SteamState = "idle" | "loading" | "ready" | "unavailable";
 
 type GitHubRepository = {
   name: string;
@@ -38,6 +49,29 @@ type GitHubRepository = {
 type GitHubRepositories = {
   username: string;
   repositories: GitHubRepository[];
+};
+
+type SteamProfile = {
+  steamId: string;
+  name: string;
+  profileUrl: string;
+  avatarUrl: string;
+  personaState: number;
+};
+
+type SteamGame = {
+  appId: number;
+  name: string;
+  playtimeForever: number;
+  playtime2Weeks: number;
+};
+
+type SteamOverview = {
+  profile: SteamProfile;
+  gameCount: number;
+  totalPlaytime: number;
+  games: SteamGame[];
+  recentlyPlayed: SteamGame[];
 };
 
 type ContributionCell = Omit<GitHubContributionDay, "date"> & {
@@ -95,9 +129,33 @@ type GuestbookComment = {
   color: string;
 };
 
+type PublishedGalleryRecord = {
+  title?: unknown;
+  image?: unknown;
+  model?: unknown;
+  prompt?: unknown;
+};
+
 const noteColors = ["ice", "mint", "lavender", "rose"] as const;
+const steamGameColors = ["#e11d48", "#f472b6", "#fb923c", "#facc15", "#84cc16", "#10b981", "#0ea5e9", "#3b82f6", "#8b5cf6", "#a78bfa"] as const;
 type NoteColor = typeof noteColors[number];
 const articlesPerPage = 5;
+
+function readPublishedGallery(): Creation[] {
+  try {
+    const records = JSON.parse(localStorage.getItem("nextalex-admin-published-gallery") || "[]") as PublishedGalleryRecord[];
+    if (!Array.isArray(records)) return [];
+
+    return records.flatMap((record) => {
+      if (typeof record.title !== "string" || typeof record.image !== "string" || typeof record.model !== "string" || typeof record.prompt !== "string") return [];
+      if (!record.title.trim() || !record.image.trim() || !record.model.trim() || !record.prompt.trim()) return [];
+
+      return [{ title: record.title, type: "AI 图像", state: "已发布", description: record.prompt, model: record.model, prompt: record.prompt, image: record.image, accent: "#ffffff" }];
+    });
+  } catch {
+    return [];
+  }
+}
 
 function buildContributionWeeks(year: number, days: GitHubContributionDay[]): ContributionCell[][] {
   const daysByDate = new Map(days.map((day) => [day.date, day]));
@@ -125,6 +183,10 @@ function formatRepositoryDate(value: string) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "";
   return new Intl.DateTimeFormat("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit" }).format(date);
+}
+
+function formatSteamPlaytime(minutes: number) {
+  return `${Math.floor(minutes / 60)} 小时`;
 }
 
 const prefersReducedMotion = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -552,6 +614,39 @@ const notes: Note[] = [
 
 const categories = ["全部文章", "Java 并发编程", "JUC 基础", "异步工具箱", "后端实践", "系统设计"];
 
+const articleWeatherLocations = [
+  { city: "Reykjavik, Iceland", temperature: 8, high: 12, low: 4, condition: "Light Rain" },
+  { city: "Kyoto, Japan", temperature: 24, high: 29, low: 18, condition: "Partly Cloudy" },
+  { city: "Lisbon, Portugal", temperature: 22, high: 27, low: 17, condition: "Clear Sky" },
+  { city: "Vancouver, Canada", temperature: 16, high: 19, low: 11, condition: "Mid Rain" },
+  { city: "Queenstown, New Zealand", temperature: 14, high: 18, low: 8, condition: "Cloudy" },
+] as const;
+
+function ArticleWeatherCard() {
+  const weather = useMemo(() => articleWeatherLocations[Math.floor(Math.random() * articleWeatherLocations.length)], []);
+
+  return (
+    <section className="article-weather" aria-label={`随机城市天气：${weather.city}`}>
+      <div className="card">
+        <svg fill="none" viewBox="0 0 342 175" height="175" width="342" xmlns="http://www.w3.org/2000/svg" className="background" aria-hidden="true">
+          <path fill="url(#article-weather-gradient)" d="M0 66.4396C0 31.6455 0 14.2484 11.326 5.24044C22.6519 -3.76754 39.6026 0.147978 73.5041 7.97901L307.903 62.1238C324.259 65.9018 332.436 67.7909 337.218 73.8031C342 79.8154 342 88.2086 342 104.995V131C342 151.742 342 162.113 335.556 168.556C329.113 175 318.742 175 298 175H44C23.2582 175 12.8873 175 6.44365 168.556C0 162.113 0 151.742 0 131V66.4396Z" />
+          <defs><linearGradient gradientUnits="userSpaceOnUse" y2="128" x2="354.142" y1="128" x1="0" id="article-weather-gradient"><stop stopColor="#5936B4" /><stop stopColor="#362A84" offset="1" /></linearGradient></defs>
+        </svg>
+        <div className="cloud" aria-hidden="true">
+          <svg fill="#000000" preserveAspectRatio="xMidYMid meet" className="iconify iconify--emojione" role="img" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+            <g fill="#75d6ff"><path d="M10.8 42.9c-.5 1.5-.1 3 1 3.4c1.1.4 2.4-.5 3-2c.6-1.8.7-4.1.2-6.9c-2.1 1.9-3.6 3.8-4.2 5.5" /><path d="M13.2 57.4c.6-1.8.7-4.1.2-6.9c-2.1 1.8-3.6 3.7-4.2 5.5c-.5 1.5-.1 3 1 3.4c1.1.4 2.5-.5 3-2" /><path d="M51.5 37.4c-2.1 1.8-3.6 3.7-4.2 5.5c-.5 1.5-.1 3 1 3.4c1.1.4 2.4-.5 3-2c.5-1.7.6-4.1.2-6.9" /><path d="M38.2 55.9c-.5 1.5-.1 3 1 3.4s2.4-.5 3-2c.6-1.8.7-4.1.2-6.9c-2 1.9-3.5 3.8-4.2 5.5" /><path d="M46.9 55.9c-.5 1.5-.1 3 1 3.4s2.4-.5 3-2c.6-1.8.7-4.1.2-6.9c-2.1 1.9-3.6 3.8-4.2 5.5" /><path d="M18.6 55.9c-.5 1.5-.1 3 1 3.4s2.4-.5 3-2c.6-1.8.7-4.1.2-6.9c-2.1 1.9-3.6 3.8-4.2 5.5" /></g>
+            <path d="M24.5 31.9l-4.9 16.2h12.5L27.9 62l16.5-20.2H32.5l2.9-9.9z" fill="#ffce31" />
+            <path fill="#ffffff" d="M18.2 32.5c-.8 0-1.6-.1-2.4-.4c-3.1-1-5.3-3.9-5.3-7.2c0-2.2 1-4.3 2.6-5.7c.4-.4.9-.7 1.4-1l.5-1.8c1.3-4.4 5.4-7.5 10-7.5c.5 0 .9 0 1.5.1c.4.1.8.1 1.2.3l.2-.4c1.9-3.3 5.4-5.4 9.2-5.4C43 3.5 47.7 8.2 47.7 14v1c.4.2.9.4 1.3.6c2.8 1.6 4.5 4.6 4.5 7.8c0 4.2-2.9 7.8-7 8.8c-.7.2-1.4.2-2 .2H18.2z" />
+            <path fill="#b6c1d1" d="M37.1 5c5 0 9 4 9 8.9v.7c-2.1.2-4 1-5.4 2.3c1.1-.6 2.4-1 3.7-1c.5 0 1 .1 1.5.1c.8.2 1.6.5 2.3.9c2.3 1.3 3.8 3.7 3.8 6.5c0 3.6-2.5 6.5-5.8 7.3c-.7.2-1.2.3-1.8.3H18.2c-.7 0-1.3-.1-1.9-.3c-2.4-.8-4.2-3.1-4.2-5.8c0-1.8.8-3.5 2.1-4.6c.6-.5 1.3-.9 2-1.2c.6-.2 1.3-.3 2-.3c2 0 3.7.9 4.9 2.4h.1c-1.3-2.4-3.7-4.1-6.6-4.3c1.1-3.7 4.5-6.4 8.5-6.4c.4 0 .9 0 1.3.1c.8.1 1.6.3 2.3.7c2.7 1.2 4.7 3.7 5.1 6.8V18c0-3.4-1.8-6.5-4.5-8.3C30.8 6.9 33.8 5 37.1 5m0-3C33 2 29.2 4.1 27 7.6h-.3c-.6-.1-1.2-.1-1.7-.1c-5.3 0-10 3.5-11.4 8.6l-.3 1.2c-.4.2-.7.5-1.1.8c-2 1.7-3.1 4.2-3.1 6.9c0 4 2.5 7.4 6.3 8.7c.9.3 1.9.5 2.9.5h26.2c.8 0 1.6-.1 2.4-.3c4.8-1.1 8.2-5.3 8.2-10.3c0-3.8-2-7.3-5.3-9.1c-.2-.1-.3-.2-.5-.3v-.1C49.2 7.4 43.8 2 37.1 2z" />
+          </svg>
+        </div>
+        <p className="main-text">{weather.temperature}°</p>
+        <div className="info"><div className="info-left"><p className="text-gray">H:{weather.high}° L: {weather.low}°</p><p>{weather.city}</p></div><p className="info-right">{weather.condition}</p></div>
+      </div>
+    </section>
+  );
+}
+
 function App() {
   return window.location.pathname.startsWith("/admin") ? <AdminApp /> : <PublicApp />;
 }
@@ -564,10 +659,13 @@ function PublicApp() {
   const [contributionState, setContributionState] = useState<ContributionState>("loading");
   const [githubRepositories, setGithubRepositories] = useState<GitHubRepositories | null>(null);
   const [repositoryState, setRepositoryState] = useState<RepositoryState>("loading");
+  const [steamOverview, setSteamOverview] = useState<SteamOverview | null>(null);
+  const [steamState, setSteamState] = useState<SteamState>("idle");
   const [developerToolsOpen, setDeveloperToolsOpen] = useState(false);
   const [copyNoticeVisible, setCopyNoticeVisible] = useState(false);
   const [activeCategory, setActiveCategory] = useState("全部文章");
   const [articlePage, setArticlePage] = useState(1);
+  const [publishedCreations, setPublishedCreations] = useState<Creation[]>(readPublishedGallery);
   const [selectedArticle, setSelectedArticle] = useState<Article | null>(null);
   const [selectedCreation, setSelectedCreation] = useState<Creation | null>(null);
   const [selectedNote, setSelectedNote] = useState<Note | null>(null);
@@ -595,6 +693,12 @@ function PublicApp() {
         setApiState("online");
       })
       .catch(() => setApiState("offline"));
+  }, []);
+
+  useEffect(() => {
+    const refreshPublishedGallery = () => setPublishedCreations(readPublishedGallery());
+    window.addEventListener("storage", refreshPublishedGallery);
+    return () => window.removeEventListener("storage", refreshPublishedGallery);
   }, []);
 
   useEffect(() => {
@@ -638,6 +742,29 @@ function PublicApp() {
 
     return () => controller.abort();
   }, []);
+
+  useEffect(() => {
+    if (view !== "entertainment") return;
+
+    const controller = new AbortController();
+    setSteamState("loading");
+    fetch("/api/steam/overview", { signal: controller.signal })
+      .then((response) => {
+        if (!response.ok) throw new Error("Steam overview request failed");
+        return response.json() as Promise<SteamOverview>;
+      })
+      .then((data) => {
+        if (!data.profile?.name || !Array.isArray(data.games) || !Array.isArray(data.recentlyPlayed)) throw new Error("Invalid Steam overview response");
+        setSteamOverview(data);
+        setSteamState("ready");
+      })
+      .catch((error: unknown) => {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        setSteamState("unavailable");
+      });
+
+    return () => controller.abort();
+  }, [view]);
 
   useEffect(() => {
     let hideCopyNotice: number | undefined;
@@ -730,30 +857,46 @@ function PublicApp() {
     notes: "日常笔记",
     gallery: "AI 创作图库",
     studio: "AI 编程项目",
+    entertainment: "娱乐",
     guestbook: "访客留言",
   };
 
   return (
-    <main className={`app-shell${view === "home" ? " home-shell" : ""}${view === "articles" ? " articles-shell" : ""}${view === "notes" ? " notes-shell" : ""}${view === "gallery" ? " gallery-shell" : ""}${view === "studio" ? " studio-shell" : ""}${view === "guestbook" ? " guestbook-shell" : ""}`}>
+    <main className={`app-shell${view === "home" ? " home-shell" : ""}${view === "articles" ? " articles-shell" : ""}${view === "notes" ? " notes-shell" : ""}${view === "gallery" ? " gallery-shell" : ""}${view === "studio" ? " studio-shell" : ""}${view === "entertainment" ? " entertainment-shell" : ""}${view === "guestbook" ? " guestbook-shell" : ""}`}>
       {(copyNoticeVisible || developerToolsOpen) && <div className="developer-tools-notice" role="status">{copyNoticeVisible ? "复制已完成，转载请标明出处" : "开发者模式已打开，请遵循 GPL 协议"}</div>}
       <header className="site-header">
         <button className="brand" onClick={() => navigate("home")} aria-label="返回首页">
           <span className="brand-mark">A</span>
           <span>ALEX / WORKS</span>
         </button>
-        <nav className="main-nav" aria-label="主导航">
-          <button aria-current={view === "home" ? "page" : undefined} className={view === "home" ? "active" : ""} onClick={() => navigate("home")}>主页</button>
-          <button aria-current={view === "articles" ? "page" : undefined} className={view === "articles" ? "active" : ""} onClick={() => navigate("articles")}>文章</button>
-          <button aria-current={view === "notes" ? "page" : undefined} className={view === "notes" ? "active" : ""} onClick={() => navigate("notes")}>笔记</button>
-          <button aria-current={view === "gallery" ? "page" : undefined} className={view === "gallery" ? "active" : ""} onClick={() => navigate("gallery")}>创作图库</button>
-          <button aria-current={view === "studio" ? "page" : undefined} className={view === "studio" ? "active" : ""} onClick={() => navigate("studio")}>创作中心</button>
-          <button aria-current={view === "guestbook" ? "page" : undefined} className={view === "guestbook" ? "active" : ""} onClick={() => navigate("guestbook")}>留言板</button>
+        <nav className="main-nav" role="tablist" aria-label="主导航">
+          {publicNavItems.map((item) => {
+            const selected = view === item.view;
+            const id = `main-nav-${item.view}`;
+
+            return (
+              <span className="cir-tabs__item" key={item.view}>
+                <input
+                  checked={selected}
+                  className="cir-tabs__r"
+                  id={id}
+                  name="main-navigation"
+                  onChange={() => navigate(item.view)}
+                  type="radio"
+                  value={item.view}
+                />
+                <label aria-current={selected ? "page" : undefined} aria-selected={selected} className="cir-tabs__t" htmlFor={id} role="tab">
+                  {item.label}
+                </label>
+              </span>
+            );
+          })}
         </nav>
         <span className={`api-pill api-pill-${apiState}`}><span />{apiState === "online" ? "在线" : apiState === "offline" ? "离线 Demo" : "连接中"}</span>
       </header>
 
       <div className={`page-stage page-stage-${view}`} key={`${view}-${viewSequence}`}>
-        {view !== "home" && view !== "guestbook" && view !== "articles" && view !== "notes" && view !== "gallery" && view !== "studio" && <section className="page-intro">
+        {view !== "home" && view !== "guestbook" && view !== "articles" && view !== "notes" && view !== "gallery" && view !== "studio" && view !== "entertainment" && <section className="page-intro">
           <h1>{viewTitle[view]}</h1>
           <p className="intro-copy">汇集 Java 技术文章、阅读笔记、AI 图像作品和 AI 编程项目。</p>
         </section>}
@@ -763,8 +906,9 @@ function PublicApp() {
           <Articles activeCategory={activeCategory} setActiveCategory={selectArticleCategory} paginatedArticles={paginatedArticles} articlePage={visibleArticlePage} articlePageCount={articlePageCount} setArticlePage={setArticlePage} setSelectedArticle={openArticle} />
         )}
         {view === "notes" && <Notes setSelectedNote={openNote} />}
-        {view === "gallery" && <Gallery creations={creations} setSelectedCreation={openCreation} />}
+        {view === "gallery" && <Gallery creations={[...publishedCreations, ...creations]} setSelectedCreation={openCreation} />}
         {view === "studio" && <Studio contributions={githubContributions} contributionState={contributionState} repositories={githubRepositories} repositoryState={repositoryState} />}
+        {view === "entertainment" && <SteamEntertainment overview={steamOverview} state={steamState} />}
         {view === "guestbook" && <Guestbook visitor={visitor} message={message} setVisitor={setVisitor} setMessage={setMessage} comments={comments} submitMessage={submitMessage} />}
       </div>
 
@@ -820,19 +964,76 @@ function Home({ navigate, setSelectedArticle, repositories, repositoryState }: {
       </section>
       <section className="home-lower home-content">
         <div><div className="section-heading compact"><div><h2>创作项目</h2></div><button className="text-action" onClick={() => navigate("studio")}>进入创作中心 <span>↗</span></button></div><div className="home-project-grid">{repositoryState === "ready" && projects.length > 0 ? projects.slice(0, 2).map((project) => <RepositoryProjectCard className="home-project-card" key={project.htmlUrl} project={project} username={repositories?.username || "GitHub"} />) : <p className="home-project-empty">{repositoryState === "loading" ? "正在同步 GitHub 项目" : "GitHub 项目暂不可用"}</p>}</div></div>
-        <aside className="guestbook-tease"><h2>笔记与留言</h2><p>查看最新笔记，或提交对文章和创作项目的反馈。</p><div className="tease-actions"><button className="outline-action" onClick={() => navigate("notes")}>查看笔记</button><button className="outline-action" onClick={() => navigate("guestbook")}>进入留言板</button></div></aside>
+        <HomeQuickFolder navigate={navigate} />
       </section>
       </div>
     </>
   );
 }
 
+function HomeQuickFolder({ navigate }: { navigate: (view: View) => void }) {
+  const [open, setOpen] = useState(false);
+  const matchesSearch = (_name: string) => true;
+  const openView = (view: View) => {
+    setOpen(false);
+    navigate(view);
+  };
+
+  return (
+    <aside className="home-folder-widget">
+      <div className="folder-card">
+        <input checked={open} className="folder-toggle" id="home-quick-folder" onChange={(event) => setOpen(event.target.checked)} type="checkbox" />
+        <label className="folder-trigger" htmlFor="home-quick-folder" aria-label={open ? "收起快捷入口" : "展开快捷入口"} />
+        <div className="hint-wrapper" aria-hidden="true"><span className="hint-text">点击展开</span><svg className="hint-arrow" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M 35 5 C 35 5, 15 5, 10 25 M 10 25 L 3 18 M 10 25 L 18 22" stroke="#60a5fa" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg></div>
+        <div className="folder-container">
+          <svg className="folder-back" viewBox="0 0 50 40" fill="none" aria-hidden="true"><path d="M0 4C0 1.79086 1.79086 0 4 0H16.524C17.721 0 18.8415 0.54051 19.574 1.4673L22.426 5.0654C23.1585 5.99219 24.279 6.5327 25.476 6.5327H46C48.2091 6.5327 50 8.32356 50 10.5327V36C50 38.2091 48.2091 40 46 40H4C1.79086 40 0 38.2091 0 36V4Z" fill="#0056b3" /></svg>
+          <button className={`file file-5${matchesSearch("创作图库") ? "" : " is-filtered-out"}`} onClick={() => openView("gallery")} type="button"><div className="shine" /><svg className="file-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2" ry="2" /><circle cx="8.5" cy="8.5" r="1.5" /><polyline points="21 15 16 10 5 21" /></svg><div className="file-text">创作图库.png</div><div className="file-tag">GALLERY · LINK</div></button>
+          <button className={`file file-4${matchesSearch("留言板") ? "" : " is-filtered-out"}`} onClick={() => openView("guestbook")} type="button"><div className="shine" /><svg className="file-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><polygon points="23 7 16 12 23 17 23 7" /><rect x="1" y="5" width="15" height="14" rx="2" ry="2" /></svg><div className="file-text">访客留言.msg</div><div className="file-tag">MESSAGE · LINK</div></button>
+          <button className={`file file-3${matchesSearch("创作中心") ? "" : " is-filtered-out"}`} onClick={() => openView("studio")} type="button"><div className="shine" /><svg className="file-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><polyline points="16 18 22 12 16 6" /><polyline points="8 6 2 12 8 18" /></svg><div className="file-text">创作中心.code</div><div className="file-tag">WORKS · LINK</div></button>
+          <button className={`file file-2${matchesSearch("文章") ? "" : " is-filtered-out"}`} onClick={() => openView("articles")} type="button"><div className="shine" /><svg className="file-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14 2 14 8 20 8" /><line x1="16" y1="13" x2="8" y2="13" /><line x1="16" y1="17" x2="8" y2="17" /><polyline points="10 9 9 9 8 9" /></svg><div className="file-text">技术文章.md</div><div className="file-tag">ARTICLES · LINK</div></button>
+          <button className={`file file-1${matchesSearch("笔记") ? "" : " is-filtered-out"}`} onClick={() => openView("notes")} type="button"><div className="shine" /><svg className="file-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><rect x="2" y="3" width="20" height="14" rx="2" ry="2" /><line x1="8" y1="21" x2="16" y2="21" /><line x1="12" y1="17" x2="12" y2="21" /></svg><div className="file-text">日常笔记.md</div><div className="file-tag">NOTES · LINK</div></button>
+          <label className="folder-front-wrapper" htmlFor="home-quick-folder" aria-label="切换快捷入口"><svg className="folder-front" viewBox="0 0 50 34" fill="none" aria-hidden="true"><path d="M0 4C0 1.79086 1.79086 0 4 0H46C48.2091 0 50 1.79086 50 4V30C50 32.2091 48.2091 34 46 34H4C1.79086 34 0 32.2091 0 30V4Z" fill="rgba(0, 123, 255, 0.65)" /></svg><div className="folder-label" /></label>
+          <button className="folder-collapse-button" onClick={() => setOpen(false)} type="button">收起文件</button>
+        </div>
+      </div>
+    </aside>
+  );
+}
+
 function Articles({ activeCategory, setActiveCategory, paginatedArticles, articlePage, articlePageCount, setArticlePage, setSelectedArticle }: { activeCategory: string; setActiveCategory: (category: string) => void; paginatedArticles: Article[]; articlePage: number; articlePageCount: number; setArticlePage: (page: number) => void; setSelectedArticle: (article: Article) => void }) {
-  return <section className="content-band article-index"><div className="article-feed"><h1>最新发布</h1><div className="article-list">{paginatedArticles.map((article) => <button className="article-feed-item" key={article.title} onClick={() => setSelectedArticle(article)}><h2>{article.title}</h2><p>{article.excerpt}</p><span className="article-read-action">阅读全文 <i aria-hidden="true">→</i></span></button>)}</div><nav className="article-pagination" aria-label="文章分页"><button className="article-pagination-arrow" type="button" onClick={() => setArticlePage(articlePage - 1)} disabled={articlePage === 1} aria-label="上一页" title="上一页"><ChevronLeft aria-hidden="true" size={17} /></button>{Array.from({ length: articlePageCount }, (_, index) => index + 1).map((page) => <button className={`article-pagination-page${page === articlePage ? " active" : ""}`} type="button" key={page} aria-current={page === articlePage ? "page" : undefined} onClick={() => setArticlePage(page)}>{page}</button>)}<button className="article-pagination-arrow" type="button" onClick={() => setArticlePage(articlePage + 1)} disabled={articlePage === articlePageCount} aria-label="下一页" title="下一页"><ChevronRight aria-hidden="true" size={17} /></button></nav></div><aside className="article-aside"><section className="article-category-panel"><h2>文章分类</h2><div className="article-category-tags" role="tablist" aria-label="文章分类">{categories.map((category) => <button key={category} role="tab" aria-selected={activeCategory === category} className={activeCategory === category ? "filter-active" : ""} onClick={() => setActiveCategory(category)}>{category}</button>)}</div></section><section className="popular-articles"><h2>热门文章</h2><div>{articles.slice(0, 5).map((article) => <button key={article.title} onClick={() => setSelectedArticle(article)}><span aria-hidden="true">→</span>{article.title}</button>)}</div></section></aside></section>;
+  return <section className="content-band article-index"><div className="article-feed"><h1>最新发布</h1><div className="article-list">{paginatedArticles.map((article) => <button className="article-feed-item" key={article.title} onClick={() => setSelectedArticle(article)}><h2>{article.title}</h2><p>{article.excerpt}</p><span className="article-read-action">阅读全文 <i aria-hidden="true">→</i></span></button>)}</div><nav className="article-pagination" aria-label="文章分页"><button className="article-pagination-arrow" type="button" onClick={() => setArticlePage(articlePage - 1)} disabled={articlePage === 1} aria-label="上一页" title="上一页"><ChevronLeft aria-hidden="true" size={17} /></button>{Array.from({ length: articlePageCount }, (_, index) => index + 1).map((page) => <button className={`article-pagination-page${page === articlePage ? " active" : ""}`} type="button" key={page} aria-current={page === articlePage ? "page" : undefined} onClick={() => setArticlePage(page)}>{page}</button>)}<button className="article-pagination-arrow" type="button" onClick={() => setArticlePage(articlePage + 1)} disabled={articlePage === articlePageCount} aria-label="下一页" title="下一页"><ChevronRight aria-hidden="true" size={17} /></button></nav></div><aside className="article-aside"><section className="article-category-panel"><h2>文章分类</h2><div className="article-category-tags" role="tablist" aria-label="文章分类">{categories.map((category) => <button key={category} role="tab" aria-selected={activeCategory === category} className={activeCategory === category ? "filter-active" : ""} onClick={() => setActiveCategory(category)}>{category}</button>)}</div></section><section className="popular-articles"><h2>热门文章</h2><div>{articles.slice(0, 5).map((article) => <button key={article.title} onClick={() => setSelectedArticle(article)}><span aria-hidden="true">→</span>{article.title}</button>)}</div></section><ArticleWeatherCard /></aside></section>;
 }
 
 function Notes({ setSelectedNote }: { setSelectedNote: (note: Note) => void }) {
-  return <section className="content-band notes-layout"><div className="notes-list"><h1>最近更新</h1>{notes.map((note) => <button className="note-entry" type="button" key={note.title} onClick={() => setSelectedNote(note)}><time>{note.date} / 2026</time><span><h2>{note.title}</h2><p>{note.body}</p></span></button>)}</div><aside className="notes-about"><div className="notes-about-card"><h2>关于本站</h2><p>用于记录学习摘要、项目更新和阅读记录。内容按时间顺序归档。</p><div className="notes-about-links"><a href="https://github.com/CbhHikari0828/NextAlexBlog" target="_blank" rel="noreferrer"><GitBranch size={20} aria-hidden="true" />GitHub</a><span><Mail size={20} aria-hidden="true" />Email</span><span><Rss size={20} aria-hidden="true" />RSS</span></div></div></aside></section>;
+  return (
+    <section className="content-band notes-layout">
+      <div className="notes-list">
+        <h1>最近更新</h1>
+        {notes.map((note) => (
+          <button className="note-entry" type="button" key={note.title} onClick={() => setSelectedNote(note)}>
+            <time>{note.date} / 2026</time>
+            <span><h2>{note.title}</h2><p>{note.body}</p></span>
+          </button>
+        ))}
+      </div>
+      <aside className="notes-about">
+        <div className="card notes-about-card">
+          <div className="content">
+            <svg fill="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+              <path d="M20 9V5H4V9H20ZM20 11H4V19H20V11ZM3 3H21C21.5523 3 22 3.44772 22 4V20C22 20.5523 21.5523 21 21 21H3C2.44772 21 2 20.5523 2 20V4C2 3.44772 2.44772 3 3 3ZM5 12H8V17H5V12ZM5 6H7V8H5V6ZM9 6H11V8H9V6Z" />
+            </svg>
+            <h2>关于本站</h2>
+            <p className="para">用于记录学习摘要、项目更新和阅读记录。内容按时间顺序归档。</p>
+            <div className="notes-about-links">
+              <a className="link" href="https://github.com/CbhHikari0828/NextAlexBlog" target="_blank" rel="noreferrer"><img className="notes-github-icon" src="/github.svg" alt="" aria-hidden="true" />GitHub</a>
+              <a className="link" href="mailto:alexlee0828cbh@gmail.com"><Mail size={20} aria-hidden="true" />Email</a>
+              <span><Rss size={20} aria-hidden="true" />RSS</span>
+            </div>
+          </div>
+        </div>
+      </aside>
+    </section>
+  );
 }
 
 function Gallery({ creations, setSelectedCreation }: { creations: Creation[]; setSelectedCreation: (creation: Creation) => void }) {
@@ -859,13 +1060,46 @@ function GalleryDisclosureCard({ creation, setSelectedCreation }: { creation: Cr
 }
 
 function RepositoryProjectCard({ project, username, className = "" }: { project: GitHubRepository; username: string; className?: string }) {
-  return <a className={`studio-project-card${className ? ` ${className}` : ""}`} href={project.htmlUrl} target="_blank" rel="noreferrer"><div className="studio-project-preview" aria-hidden="true"><span>{username} /</span><strong>{project.name}</strong><GitBranch size={24} strokeWidth={1.8} /></div><div className="studio-project-card-body"><span>{project.language || "Repository"}</span><h3>{project.name}</h3><p>{project.description || "暂无项目说明"}</p><footer><span><Star size={16} />{project.stars}</span><span><GitFork size={16} />{project.forks}</span><time dateTime={project.updatedAt}>{formatRepositoryDate(project.updatedAt)}</time><ArrowUpRight size={19} /></footer></div></a>;
+  return <div className={`studio-project-parent${className ? ` ${className}` : ""}`}>
+    <a className="studio-project-card" href={project.htmlUrl} target="_blank" rel="noreferrer" aria-label={`打开 ${username} 的 GitHub 项目 ${project.name}`}>
+      <div className="studio-project-logo" aria-hidden="true">
+        <span className="studio-project-circle studio-project-circle1" />
+        <span className="studio-project-circle studio-project-circle2" />
+        <span className="studio-project-circle studio-project-circle3" />
+        <span className="studio-project-circle studio-project-circle4" />
+        <span className="studio-project-circle studio-project-circle5"><GitBranch className="studio-project-svg" size={20} /></span>
+      </div>
+      <div className="studio-project-glass" aria-hidden="true" />
+      <div className="studio-project-card-content">
+        <span className="studio-project-title">{project.name}</span>
+        <span className="studio-project-text">{project.description || "暂无项目说明"}</span>
+      </div>
+      <div className="studio-project-bottom" aria-hidden="true">
+        <div className="studio-project-social-buttons-container">
+          <span className="studio-project-social-button" title={`${project.stars} stars`}><Star className="studio-project-svg" size={15} /></span>
+          <span className="studio-project-social-button" title={`${project.forks} forks`}><GitFork className="studio-project-svg" size={15} /></span>
+          <span className="studio-project-social-button" title={formatRepositoryDate(project.updatedAt)}><GitBranch className="studio-project-svg" size={15} /></span>
+        </div>
+        <div className="studio-project-view-more">
+          <span className="studio-project-view-more-button">{project.language || "Repository"}</span>
+          <ChevronDown className="studio-project-svg" size={15} strokeWidth={3} />
+        </div>
+      </div>
+    </a>
+  </div>;
 }
 
 function Studio({ contributions, contributionState, repositories, repositoryState }: { contributions: GitHubContributions | null; contributionState: ContributionState; repositories: GitHubRepositories | null; repositoryState: RepositoryState }) {
   const contributionYear = contributions?.year ?? new Date().getFullYear();
-  const contributionMonths = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
   const contributionWeeks = buildContributionWeeks(contributionYear, contributions?.days ?? []);
+  const contributionMonthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  const contributionMonths = contributionWeeks.flatMap((week, weekIndex) => {
+    const firstDayOfMonth = week.find((cell) => cell.date?.endsWith("-01"));
+    if (!firstDayOfMonth?.date) return [];
+
+    return [{ name: contributionMonthNames[Number(firstDayOfMonth.date.slice(5, 7)) - 1], weekIndex }];
+  });
+  const contributionSummary = contributionState === "ready" ? `${contributionYear} 年 ${contributions?.total ?? 0} 次贡献` : contributionState === "loading" ? "正在同步贡献记录" : "贡献记录暂不可用";
   const projects = repositories?.repositories ?? [];
 
   return <section className="studio-layout">
@@ -883,14 +1117,70 @@ function Studio({ contributions, contributionState, repositories, repositoryStat
         <div className="studio-actions"><a className="studio-action-primary" href="https://github.com/CbhHikari0828/NextAlexBlog" target="_blank" rel="noreferrer">View on GitHub <ArrowUpRight size={17} /></a><a className="studio-action-secondary" href="https://github.com/CbhHikari0828?tab=repositories" target="_blank" rel="noreferrer">All Projects <ArrowUpRight size={17} /></a></div>
       </div>
       <section className="contribution-panel" aria-label="项目贡献记录">
-        <header><strong>GITHUB CONTRIBUTIONS</strong><a href="https://github.com/CbhHikari0828" target="_blank" rel="noreferrer">{contributionYear} <ChevronDown size={16} /></a></header>
-        <div className="contribution-months">{contributionMonths.map((month) => <span key={month}>{month}</span>)}</div>
-        <div className="contribution-grid">{contributionWeeks.map((week, weekIndex) => <div className="contribution-week" key={weekIndex}>{week.map((cell, dayIndex) => <i className={`contribution-cell contribution-level-${cell.level}${cell.date ? "" : " contribution-cell-outside"}`} key={dayIndex} title={cell.date ? `${cell.date}: ${cell.count} contributions` : undefined} />)}</div>)}</div>
-        <footer><span>{contributionState === "ready" ? `${contributions?.total ?? 0} contributions` : contributionState === "loading" ? "Loading GitHub data" : "GitHub data unavailable"}</span><i className="contribution-cell contribution-level-0" /><i className="contribution-cell contribution-level-1" /><i className="contribution-cell contribution-level-2" /><i className="contribution-cell contribution-level-3" /><i className="contribution-cell contribution-level-4" /></footer>
+        <header><strong>{contributionSummary}</strong><a href="https://github.com/CbhHikari0828" target="_blank" rel="noreferrer">{contributionYear} <ChevronDown size={16} /></a></header>
+        <div className="contribution-calendar" style={{ "--contribution-week-count": contributionWeeks.length } as React.CSSProperties}>
+          <div className="contribution-months">{contributionMonths.map((month) => <span key={`${month.name}-${month.weekIndex}`} style={{ gridColumnStart: month.weekIndex + 1 }}>{month.name}</span>)}</div>
+          <div className="contribution-grid">{contributionWeeks.map((week, weekIndex) => <div className="contribution-week" key={weekIndex}>{week.map((cell, dayIndex) => <i className={`contribution-cell contribution-level-${cell.level}${cell.date ? "" : " contribution-cell-outside"}`} key={dayIndex} title={cell.date ? `${cell.date}: ${cell.count} 次贡献` : undefined} />)}</div>)}</div>
+        </div>
+        <footer><span>少</span><i className="contribution-cell contribution-level-0" /><i className="contribution-cell contribution-level-1" /><i className="contribution-cell contribution-level-2" /><i className="contribution-cell contribution-level-3" /><i className="contribution-cell contribution-level-4" /><span>多</span></footer>
       </section>
     </div>
     <section className="studio-projects"><header><h2>PROJECTS</h2><span /><a href="https://github.com/CbhHikari0828?tab=repositories" target="_blank" rel="noreferrer">VIEW ALL <ArrowUpRight size={17} /></a></header><div className="studio-project-grid">{repositoryState === "ready" && projects.length > 0 ? projects.map((project) => <RepositoryProjectCard key={project.htmlUrl} project={project} username={repositories?.username || "GitHub"} />) : <p className="studio-project-empty">{repositoryState === "loading" ? "正在同步 GitHub 项目" : "GitHub 项目暂不可用"}</p>}</div></section>
   </section>;
+}
+
+function SteamEntertainment({ overview, state }: { overview: SteamOverview | null; state: SteamState }) {
+  if (state !== "ready" || !overview) return <section className="steam-page steam-state"><p>{state === "loading" ? "正在同步 Steam 数据" : "Steam 数据暂不可用"}</p></section>;
+  const recentGames = overview.recentlyPlayed.filter((game) => !isHiddenSteamGame(game));
+  const libraryGames = overview.games.filter((game) => !isHiddenSteamGame(game));
+
+  return <section className="steam-page">
+    <header className="steam-profile">
+      <div><h1>{overview.profile.name}</h1><a href={overview.profile.profileUrl} target="_blank" rel="noreferrer">Steam 个人主页</a></div>
+      <div className="steam-profile-cards"><SteamProfileStatCard title="游戏库" value={`${overview.gameCount}`} detail="拥有游戏" /><SteamProfileStatCard title="游玩时长" value={formatSteamPlaytime(overview.totalPlaytime)} detail="累计时长" /></div>
+    </header>
+    {recentGames.length > 0 && <section className="steam-section"><h2>最近游玩</h2><SteamGameCoverStrip games={recentGames} recent /></section>}
+    <section className="steam-section"><h2>游戏库</h2><SteamGameAccordion games={libraryGames} /></section>
+  </section>;
+}
+
+function isHiddenSteamGame(game: SteamGame) {
+  return game.appId === 431960 || game.name.trim().toLocaleLowerCase("en-US") === "wallpaper engine";
+}
+
+function SteamGameCoverStrip({ games, recent = false }: { games: SteamGame[]; recent?: boolean }) {
+  const featuredGames = [...games].sort((left, right) => right.playtimeForever - left.playtimeForever).slice(0, 10);
+
+  return <div className="steam-game-strip" role="list">{featuredGames.map((game, index) => {
+    const playtime = recent ? `${formatSteamPlaytime(game.playtime2Weeks)} / 近两周` : formatSteamPlaytime(game.playtimeForever);
+    const cover = `https://cdn.cloudflare.steamstatic.com/steam/apps/${game.appId}/header.jpg`;
+
+    return <a className="steam-game-item" key={game.appId} href={`https://store.steampowered.com/app/${game.appId}`} target="_blank" rel="noreferrer" role="listitem" aria-label={`${game.name}，${playtime}`} data-game={`${game.name} · ${playtime}`} style={{ "--color": steamGameColors[index], "--cover": `url(${cover})` } as React.CSSProperties} />;
+  })}</div>;
+}
+
+function SteamProfileStatCard({ title, value, detail }: { title: string; value: string; detail: string }) {
+  return <div className="steam-stat-card">
+    <div className="steam-stat-image"><svg xmlns="http://www.w3.org/2000/svg" height="77" width="76" viewBox="0 0 76 77" aria-hidden="true"><path fillRule="nonzero" fill="#3F9CBB" d="m60.91 71.846 12.314-19.892c3.317-5.36 3.78-13.818-2.31-19.908l-26.36-26.36c-4.457-4.457-12.586-6.843-19.908-2.31L4.753 15.69c-5.4 3.343-6.275 10.854-1.779 15.35a7.773 7.773 0 0 0 7.346 2.035l7.783-1.945a3.947 3.947 0 0 1 3.731 1.033l22.602 22.602c.97.97 1.367 2.4 1.033 3.732l-1.945 7.782a7.775 7.775 0 0 0 2.037 7.349c4.49 4.49 12.003 3.624 15.349-1.782Zm-24.227-46.12-1.891-1.892-1.892 1.892a2.342 2.342 0 0 1-3.312-3.312l1.892-1.892-1.892-1.891a2.342 2.342 0 0 1 3.312-3.312l1.892 1.891 1.891-1.891a2.342 2.342 0 0 1 3.312 3.312l-1.891 1.891 1.891 1.892a2.342 2.342 0 0 1-3.312 3.312Zm14.19 14.19a2.343 2.343 0 1 1 3.315-3.312 2.343 2.343 0 0 1-3.314 3.312Zm0 7.096a2.343 2.343 0 0 1 3.313-3.312 2.343 2.343 0 0 1-3.312 3.312Zm7.096-7.095a2.343 2.343 0 1 1 3.312 0 2.343 2.343 0 0 1-3.312 0Zm0 7.095a2.343 2.343 0 0 1 3.312-3.312 2.343 2.343 0 0 1-3.312 3.312Z" /></svg></div>
+    <div className="steam-stat-desc"><div className="steam-stat-header"><div className="steam-stat-title">{title}</div><div className="steam-stat-menu" aria-hidden="true"><i /><i /><i /></div></div><div className="steam-stat-time">{value}</div><p>{detail}</p></div>
+  </div>;
+}
+
+function SteamGameAccordion({ games }: { games: SteamGame[] }) {
+  const featuredGames = [...games].sort((left, right) => right.playtimeForever - left.playtimeForever).slice(0, 16);
+  const [activeGameId, setActiveGameId] = useState<number | null>(() => featuredGames[0]?.appId ?? null);
+  const defaultGameId = featuredGames[0]?.appId ?? null;
+
+  return <div className="steam-library-accordion" role="list" onMouseLeave={() => setActiveGameId(defaultGameId)}>{featuredGames.map((game, index) => {
+    const cover = `https://cdn.cloudflare.steamstatic.com/steam/apps/${game.appId}/header.jpg`;
+    const playtime = formatSteamPlaytime(game.playtimeForever);
+    const active = game.appId === activeGameId;
+
+    return <a className={`steam-library-accordion-item${active ? " is-active" : ""}`} key={game.appId} href={`https://store.steampowered.com/app/${game.appId}`} target="_blank" rel="noreferrer" role="listitem" aria-current={active ? "true" : undefined} aria-label={`${game.name}，${playtime}`} onFocus={() => setActiveGameId(game.appId)} onMouseEnter={() => setActiveGameId(game.appId)} style={{ "--cover": `url(${cover})`, "--accent": steamGameColors[index] } as React.CSSProperties}>
+      <span className="steam-library-accordion-cover" aria-hidden="true" />
+      <span className="steam-library-accordion-details"><strong>{game.name}</strong><span>总时长 {playtime}</span><span className="steam-library-accordion-action">查看商店 <ArrowUpRight size={16} aria-hidden="true" /></span></span>
+    </a>;
+  })}</div>;
 }
 
 function Guestbook({ visitor, message, setVisitor, setMessage, comments, submitMessage }: { visitor: string; message: string; setVisitor: (value: string) => void; setMessage: (value: string) => void; comments: GuestbookComment[]; submitMessage: (event: FormEvent<HTMLFormElement>, color: NoteColor) => void }) {

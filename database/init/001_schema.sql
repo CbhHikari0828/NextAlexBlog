@@ -45,3 +45,9 @@ CREATE TABLE IF NOT EXISTS post_tags (
     tag_id BIGINT NOT NULL REFERENCES tags (id) ON DELETE CASCADE,
     PRIMARY KEY (post_id, tag_id)
 );
+
+CREATE TABLE IF NOT EXISTS steam_overview_snapshots (
+    id SMALLINT PRIMARY KEY CHECK (id = 1),
+    payload JSONB NOT NULL,
+    refreshed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
