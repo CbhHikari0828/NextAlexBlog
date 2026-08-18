@@ -57,3 +57,16 @@ CREATE TABLE IF NOT EXISTS github_overview_snapshots (
     payload JSONB NOT NULL,
     refreshed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+CREATE TABLE IF NOT EXISTS music_preferences (
+    id BIGSERIAL PRIMARY KEY,
+    title TEXT NOT NULL,
+    artist TEXT NOT NULL DEFAULT '',
+    album TEXT NOT NULL DEFAULT '',
+    genre TEXT NOT NULL DEFAULT '',
+    duration TEXT NOT NULL DEFAULT '',
+    release_date TEXT NOT NULL DEFAULT '',
+    cover_url TEXT NOT NULL DEFAULT '',
+    external_url TEXT NOT NULL UNIQUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);

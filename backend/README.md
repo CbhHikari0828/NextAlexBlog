@@ -18,6 +18,9 @@ The API listens on `http://localhost:8090`.
 - `POST /api/admin/github/refresh`: requests the configured GitHub account once and replaces the PostgreSQL snapshot with the profile, repositories, and contribution calendar.
 - `GET /api/steam/overview`: returns the Steam snapshot stored in PostgreSQL. This endpoint never requests the Steam Web API.
 - `POST /api/admin/steam/refresh`: requests Steam once and replaces the stored snapshot. Use this from the admin Steam sync screen.
+- `GET /api/music`: returns music preferences stored in PostgreSQL.
+- `POST /api/admin/music/import`: imports public metadata from an HTTPS Apple Music, QQ Music, or NetEase Cloud Music URL and stores it in PostgreSQL. Only public page metadata is read; no platform API key or login session is required.
+- `DELETE /api/admin/music/:id`: removes a stored music preference.
 
 The contribution calendar defaults to `CbhHikari0828`. To use another public account during startup:
 

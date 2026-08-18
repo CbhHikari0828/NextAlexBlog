@@ -88,8 +88,9 @@ test.describe("页面切换和弹窗交互", () => {
     await page.goto("/admin");
 
     const navigation = page.locator(".admin-nav");
-    await expect(navigation.getByRole("button")).toHaveCount(7);
+    await expect(navigation.getByRole("button")).toHaveCount(8);
     await expect(navigation.getByRole("button", { name: "Steam 同步" })).toHaveCount(1);
+    await expect(navigation.getByRole("button", { name: "音乐管理" })).toHaveCount(1);
     await expect(navigation.getByRole("button", { name: "媒体管理" })).toHaveCount(0);
     await expect(navigation.getByRole("button", { name: "分类标签" })).toHaveCount(0);
     await expect(navigation.getByRole("button", { name: "系统设置" })).toHaveCount(0);
@@ -102,12 +103,40 @@ test.describe("页面切换和弹窗交互", () => {
     await expect.poll(() => page.evaluate(() => localStorage.getItem("alex-guestbook"))).not.toContain("第一条留言");
   });
 
+  test("管理员端可导入和删除音乐条目", async ({ page }) => {
+    const importedMusic = { id: 1, title: "Serenade (KARINA & WINTER)", artist: "aespa", album: "SYNK : aeXIS LINE", genre: "K-Pop", duration: "3:05", releaseDate: "2026-08-09", cover: "https://example.com/cover.png", href: "https://music.apple.com/cn/song/serenade-karina-winter/6797481677" };
+    let entries: typeof importedMusic[] = [];
+    await page.route("**/api/music", async (route) => {
+      expect(route.request().method()).toBe("GET");
+      await route.fulfill({ contentType: "application/json", body: JSON.stringify(entries) });
+    });
+    await page.route("**/api/admin/music/import", async (route) => {
+      expect(route.request().method()).toBe("POST");
+      entries = [importedMusic];
+      await route.fulfill({ contentType: "application/json", body: JSON.stringify(importedMusic) });
+    });
+    await page.route("**/api/admin/music/1", async (route) => {
+      expect(route.request().method()).toBe("DELETE");
+      entries = [];
+      await route.fulfill({ status: 204 });
+    });
+
+    await page.goto("/admin");
+    await page.locator(".admin-nav").getByRole("button", { name: "音乐管理" }).click();
+    const manager = page.locator(".admin-music-manager");
+    await manager.getByLabel("音乐链接").fill("https://music.apple.com/cn/album/serenade-karina-winter/6797481676?i=6797481677");
+    await manager.getByRole("button", { name: "导入音乐" }).click();
+    await expect(manager).toContainText("Serenade (KARINA & WINTER)");
+    await manager.getByRole("button", { name: "删除 Serenade (KARINA & WINTER)" }).click();
+    await expect(manager.locator(".admin-music-list article")).toHaveCount(0);
+  });
+
   test("管理员端所有页面适配手机宽度", async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto("/admin");
 
     const navigation = page.locator(".admin-nav");
-    for (const label of ["总览", "文章发布", "笔记发布", "图库发布", "项目同步", "Steam 同步", "留言管理"]) {
+    for (const label of ["总览", "文章发布", "笔记发布", "图库发布", "项目同步", "Steam 同步", "音乐管理", "留言管理"]) {
       await navigation.getByRole("button", { name: label }).click();
       await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
     }
@@ -116,6 +145,9 @@ test.describe("页面切换和弹窗交互", () => {
   test("娱乐分区展示 Steam 游戏数据并适配手机宽度", async ({ page }) => {
     await page.route("**/api/steam/overview", async (route) => {
       await route.fulfill({ contentType: "application/json", body: JSON.stringify({ profile: { steamId: "76561198000000000", name: "NextAlex Steam", profileUrl: "https://steamcommunity.com/id/nextalex", avatarUrl: "https://example.com/avatar.jpg", personaState: 1 }, gameCount: 2, totalPlaytime: 180, recentlyPlayed: [{ appId: 10, name: "Counter-Strike", playtimeForever: 120, playtime2Weeks: 30 }], games: [{ appId: 10, name: "Counter-Strike", playtimeForever: 120, playtime2Weeks: 30 }, { appId: 20, name: "Team Fortress", playtimeForever: 60, playtime2Weeks: 0 }] }) });
+    });
+    await page.route("**/api/music", async (route) => {
+      await route.fulfill({ contentType: "application/json", body: "[]" });
     });
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto("/");
@@ -128,6 +160,9 @@ test.describe("页面切换和弹窗交互", () => {
     await expect(libraryGame).toBeVisible();
     await expect(libraryGame).toHaveAttribute("href", /store\.steampowered\.com\/app\/10/);
     await expect(libraryGame).toHaveAttribute("style", /steam\/apps\/10\/header\.jpg/);
+    await expect(steamPage.getByRole("heading", { name: "音乐偏好" })).toBeVisible();
+    await expect(steamPage.locator(".music-card")).toHaveCount(1);
+    await expect(steamPage.locator(".music-card")).toHaveAttribute("href", /music\.apple\.com\/cn\/album\/serenade-karina-winter/);
     await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   });
 

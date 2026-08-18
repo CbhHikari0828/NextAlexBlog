@@ -25,6 +25,7 @@ import (
 
 var contributionCountPattern = regexp.MustCompile(`([0-9][0-9,]*)\s+contribution`)
 var steamIDPattern = regexp.MustCompile(`^\d{17}$`)
+var isoDurationPattern = regexp.MustCompile(`^PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?$`)
 
 type contributionDay struct {
 	Date  string `json:"date"`
@@ -52,6 +53,128 @@ type githubRepository struct {
 type githubRepositories struct {
 	Username     string             `json:"username"`
 	Repositories []githubRepository `json:"repositories"`
+}
+
+type musicPreference struct {
+	ID          int64  `json:"id"`
+	Title       string `json:"title"`
+	Artist      string `json:"artist"`
+	Album       string `json:"album"`
+	Genre       string `json:"genre"`
+	Duration    string `json:"duration"`
+	ReleaseDate string `json:"releaseDate"`
+	CoverURL    string `json:"cover"`
+	ExternalURL string `json:"href"`
+}
+
+type musicPreferenceStore interface {
+	ListMusicPreferences(context.Context) ([]musicPreference, error)
+	SaveMusicPreference(context.Context, musicPreference) (musicPreference, error)
+	DeleteMusicPreference(context.Context, int64) error
+}
+
+type postgresMusicPreferenceStore struct {
+	pool *pgxpool.Pool
+}
+
+var errMusicPreferenceNotFound = errors.New("music preference not found")
+var errInvalidMusicURL = errors.New("invalid supported music URL")
+
+// Keep the old name for callers compiled against the original Apple-only importer.
+var errInvalidAppleMusicURL = errInvalidMusicURL
+
+type musicProvider string
+
+const (
+	musicProviderApple   musicProvider = "Apple Music"
+	musicProviderQQ      musicProvider = "QQ Music"
+	musicProviderNetEase musicProvider = "NetEase Cloud Music"
+)
+
+var musicHostProviders = map[string]musicProvider{
+	"music.apple.com":   musicProviderApple,
+	"y.qq.com":          musicProviderQQ,
+	"c.y.qq.com":        musicProviderQQ,
+	"i.y.qq.com":        musicProviderQQ,
+	"i2.y.qq.com":       musicProviderQQ,
+	"music.163.com":     musicProviderNetEase,
+	"www.music.163.com": musicProviderNetEase,
+}
+
+func (store postgresMusicPreferenceStore) ListMusicPreferences(ctx context.Context) ([]musicPreference, error) {
+	rows, err := store.pool.Query(ctx, `
+		SELECT id, title, artist, album, genre, duration, release_date, cover_url, external_url
+		FROM music_preferences
+		ORDER BY created_at DESC, id DESC
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("list music preferences: %w", err)
+	}
+	defer rows.Close()
+
+	preferences := make([]musicPreference, 0)
+	for rows.Next() {
+		var preference musicPreference
+		if err := rows.Scan(
+			&preference.ID,
+			&preference.Title,
+			&preference.Artist,
+			&preference.Album,
+			&preference.Genre,
+			&preference.Duration,
+			&preference.ReleaseDate,
+			&preference.CoverURL,
+			&preference.ExternalURL,
+		); err != nil {
+			return nil, fmt.Errorf("scan music preference: %w", err)
+		}
+		preferences = append(preferences, preference)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate music preferences: %w", err)
+	}
+	return preferences, nil
+}
+
+func (store postgresMusicPreferenceStore) SaveMusicPreference(ctx context.Context, preference musicPreference) (musicPreference, error) {
+	err := store.pool.QueryRow(ctx, `
+		INSERT INTO music_preferences (title, artist, album, genre, duration, release_date, cover_url, external_url)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		ON CONFLICT (external_url) DO UPDATE SET
+			title = EXCLUDED.title,
+			artist = EXCLUDED.artist,
+			album = EXCLUDED.album,
+			genre = EXCLUDED.genre,
+			duration = EXCLUDED.duration,
+			release_date = EXCLUDED.release_date,
+			cover_url = EXCLUDED.cover_url
+		RETURNING id, title, artist, album, genre, duration, release_date, cover_url, external_url
+	`, preference.Title, preference.Artist, preference.Album, preference.Genre, preference.Duration, preference.ReleaseDate, preference.CoverURL, preference.ExternalURL).Scan(
+		&preference.ID,
+		&preference.Title,
+		&preference.Artist,
+		&preference.Album,
+		&preference.Genre,
+		&preference.Duration,
+		&preference.ReleaseDate,
+		&preference.CoverURL,
+		&preference.ExternalURL,
+	)
+	if err != nil {
+		return musicPreference{}, fmt.Errorf("save music preference: %w", err)
+	}
+	return preference, nil
+}
+
+func (store postgresMusicPreferenceStore) DeleteMusicPreference(ctx context.Context, id int64) error {
+	commandTag, err := store.pool.Exec(ctx, `DELETE FROM music_preferences WHERE id = $1`, id)
+	if err != nil {
+		return fmt.Errorf("delete music preference: %w", err)
+	}
+	if commandTag.RowsAffected() == 0 {
+		return errMusicPreferenceNotFound
+	}
+	return nil
 }
 
 type githubProfile struct {
@@ -255,6 +378,9 @@ func main() {
 	if err := ensureOverviewSnapshotTables(context.Background(), pool); err != nil {
 		log.Fatalf("ensure overview snapshot tables: %v", err)
 	}
+	if err := ensureMusicPreferencesTable(context.Background(), pool); err != nil {
+		log.Fatalf("ensure music preferences table: %v", err)
+	}
 
 	router := gin.New()
 	router.Use(gin.Logger(), gin.Recovery())
@@ -268,6 +394,11 @@ func main() {
 	steamStore := postgresSteamOverviewStore{pool: pool}
 	router.GET("/api/steam/overview", steamOverviewHandler(steamStore))
 	router.POST("/api/admin/steam/refresh", steamRefreshHandler(githubClient, steamAPIKey, steamID, steamStore))
+	musicStore := postgresMusicPreferenceStore{pool: pool}
+	musicClient := newMusicClient()
+	router.GET("/api/music", musicPreferencesHandler(musicStore))
+	router.POST("/api/admin/music/import", musicImportHandler(musicClient, musicStore))
+	router.DELETE("/api/admin/music/:id", musicDeleteHandler(musicStore))
 
 	server := &http.Server{
 		Addr:              ":" + port,
@@ -374,6 +505,721 @@ func ensureOverviewSnapshotTables(ctx context.Context, pool *pgxpool.Pool) error
 		)
 	`)
 	return err
+}
+
+func ensureMusicPreferencesTable(ctx context.Context, pool *pgxpool.Pool) error {
+	_, err := pool.Exec(ctx, `
+		CREATE TABLE IF NOT EXISTS music_preferences (
+			id BIGSERIAL PRIMARY KEY,
+			title TEXT NOT NULL,
+			artist TEXT NOT NULL DEFAULT '',
+			album TEXT NOT NULL DEFAULT '',
+			genre TEXT NOT NULL DEFAULT '',
+			duration TEXT NOT NULL DEFAULT '',
+			release_date TEXT NOT NULL DEFAULT '',
+			cover_url TEXT NOT NULL DEFAULT '',
+			external_url TEXT NOT NULL UNIQUE,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)
+	`)
+	return err
+}
+
+func newMusicClient() *http.Client {
+	return &http.Client{
+		Timeout: 10 * time.Second,
+		CheckRedirect: func(request *http.Request, _ []*http.Request) error {
+			if _, ok := musicProviderForURL(request.URL); !ok {
+				return errInvalidMusicURL
+			}
+			return nil
+		},
+	}
+}
+
+func newAppleMusicClient() *http.Client {
+	return newMusicClient()
+}
+
+func musicProviderForURL(value *url.URL) (musicProvider, bool) {
+	if value == nil || value.Scheme != "https" || value.User != nil {
+		return "", false
+	}
+	if value.Port() != "" && value.Port() != "443" {
+		return "", false
+	}
+	provider, ok := musicHostProviders[strings.TrimSuffix(strings.ToLower(value.Hostname()), ".")]
+	return provider, ok
+}
+
+func isAppleMusicURL(value *url.URL) bool {
+	provider, ok := musicProviderForURL(value)
+	return ok && provider == musicProviderApple
+}
+
+func validateMusicURL(rawURL string) (*url.URL, musicProvider, error) {
+	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil || parsed.Path == "" {
+		return nil, "", errInvalidMusicURL
+	}
+	provider, ok := musicProviderForURL(parsed)
+	if !ok {
+		return nil, "", errInvalidMusicURL
+	}
+	return parsed, provider, nil
+}
+
+func validateAppleMusicURL(rawURL string) (*url.URL, error) {
+	parsed, provider, err := validateMusicURL(rawURL)
+	if err != nil || provider != musicProviderApple {
+		return nil, errInvalidMusicURL
+	}
+	return parsed, nil
+}
+
+func normalizeMusicPageURL(pageURL *url.URL, provider musicProvider) *url.URL {
+	if pageURL == nil {
+		return pageURL
+	}
+	if provider == musicProviderQQ && strings.EqualFold(pageURL.Hostname(), "y.qq.com") {
+		pathSegments := strings.Split(strings.Trim(pageURL.Path, "/"), "/")
+		for index, segment := range pathSegments {
+			if strings.EqualFold(segment, "songDetail") && index+1 < len(pathSegments) && pathSegments[index+1] != "" {
+				return &url.URL{Scheme: "https", Host: "i.y.qq.com", Path: "/v8/playsong.html", RawQuery: url.Values{"songmid": []string{pathSegments[index+1]}}.Encode()}
+			}
+		}
+	}
+	if provider != musicProviderNetEase || !strings.HasPrefix(pageURL.Fragment, "/") {
+		return pageURL
+	}
+	fragmentURL, err := url.Parse(pageURL.Fragment)
+	if err != nil || fragmentURL.Path == "" {
+		return pageURL
+	}
+	normalized := *pageURL
+	normalized.Path = fragmentURL.Path
+	normalized.RawPath = fragmentURL.RawPath
+	normalized.RawQuery = fragmentURL.RawQuery
+	normalized.Fragment = ""
+	return &normalized
+}
+
+type appleMusicJSONLD struct {
+	Name          string          `json:"name"`
+	URL           string          `json:"url"`
+	DatePublished string          `json:"datePublished"`
+	TimeRequired  string          `json:"timeRequired"`
+	Image         string          `json:"image"`
+	Genre         json.RawMessage `json:"genre"`
+	Audio         struct {
+		Name     string `json:"name"`
+		Duration string `json:"duration"`
+		Image    string `json:"image"`
+		ByArtist []struct {
+			Name string `json:"name"`
+		} `json:"byArtist"`
+		InAlbum struct {
+			Name     string `json:"name"`
+			Image    string `json:"image"`
+			ByArtist []struct {
+				Name string `json:"name"`
+			} `json:"byArtist"`
+		} `json:"inAlbum"`
+	} `json:"audio"`
+}
+
+func fetchAppleMusicPreference(ctx context.Context, client *http.Client, rawURL string) (musicPreference, error) {
+	pageURL, err := validateAppleMusicURL(rawURL)
+	if err != nil {
+		return musicPreference{}, err
+	}
+
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, pageURL.String(), nil)
+	if err != nil {
+		return musicPreference{}, fmt.Errorf("create Apple Music request: %w", err)
+	}
+	request.Header.Set("Accept", "text/html,application/xhtml+xml")
+	request.Header.Set("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
+	request.Header.Set("User-Agent", "NextAlexBlog/1.0")
+	response, err := client.Do(request)
+	if err != nil {
+		return musicPreference{}, fmt.Errorf("request Apple Music page: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return musicPreference{}, fmt.Errorf("Apple Music returned %s", response.Status)
+	}
+
+	document, err := html.Parse(io.LimitReader(response.Body, 3<<20))
+	if err != nil {
+		return musicPreference{}, fmt.Errorf("parse Apple Music page: %w", err)
+	}
+	metadata := make(map[string]string)
+	var schemaData string
+	var walk func(*html.Node)
+	walk = func(node *html.Node) {
+		if node.Type == html.ElementNode {
+			attributes := htmlAttributes(node)
+			switch node.Data {
+			case "meta":
+				key := strings.ToLower(attributes["property"])
+				if key == "" {
+					key = strings.ToLower(attributes["name"])
+				}
+				if key != "" && attributes["content"] != "" {
+					metadata[key] = strings.TrimSpace(attributes["content"])
+				}
+			case "script":
+				if attributes["id"] == "schema:song" || strings.EqualFold(attributes["type"], "application/ld+json") {
+					candidate := strings.TrimSpace(htmlText(node))
+					if strings.Contains(candidate, `"@type":"MusicComposition"`) || strings.Contains(candidate, `"@type": "MusicComposition"`) {
+						schemaData = candidate
+					}
+				}
+			}
+		}
+		for child := node.FirstChild; child != nil; child = child.NextSibling {
+			walk(child)
+		}
+	}
+	walk(document)
+
+	var schema appleMusicJSONLD
+	if schemaData != "" {
+		if err := json.Unmarshal([]byte(schemaData), &schema); err != nil {
+			return musicPreference{}, fmt.Errorf("decode Apple Music metadata: %w", err)
+		}
+	}
+	title := firstNonEmpty(schema.Name, metadata["apple:title"])
+	artist := ""
+	if len(schema.Audio.ByArtist) > 0 {
+		artist = schema.Audio.ByArtist[0].Name
+	}
+	if artist == "" && len(schema.Audio.InAlbum.ByArtist) > 0 {
+		artist = schema.Audio.InAlbum.ByArtist[0].Name
+	}
+	album := schema.Audio.InAlbum.Name
+	cover := firstNonEmpty(schema.Audio.InAlbum.Image, schema.Audio.Image, schema.Image, metadata["og:image"], metadata["twitter:image"])
+	externalURL := firstNonEmpty(schema.URL, metadata["music:song"], pageURL.String())
+	duration := formatAppleMusicDuration(firstNonEmpty(schema.TimeRequired, schema.Audio.Duration))
+	if title == "" || artist == "" || cover == "" {
+		return musicPreference{}, errors.New("Apple Music page did not contain complete song metadata")
+	}
+	return musicPreference{
+		Title:       title,
+		Artist:      artist,
+		Album:       album,
+		Genre:       firstAppleMusicGenre(schema.Genre),
+		Duration:    duration,
+		ReleaseDate: strings.Split(firstNonEmpty(schema.DatePublished, metadata["music:release_date"]), "T")[0],
+		CoverURL:    cover,
+		ExternalURL: externalURL,
+	}, nil
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
+func firstAppleMusicGenre(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var genres []string
+	if json.Unmarshal(raw, &genres) == nil {
+		for _, genre := range genres {
+			if strings.TrimSpace(genre) != "" && !strings.EqualFold(genre, "music") && genre != "音乐" {
+				return strings.TrimSpace(genre)
+			}
+		}
+	}
+	var genre string
+	if json.Unmarshal(raw, &genre) == nil {
+		return strings.TrimSpace(genre)
+	}
+	return ""
+}
+
+func formatAppleMusicDuration(raw string) string {
+	match := isoDurationPattern.FindStringSubmatch(strings.TrimSpace(raw))
+	if len(match) == 0 {
+		return strings.TrimSpace(raw)
+	}
+	hours, minutes, seconds := 0, 0, 0
+	if match[1] != "" {
+		hours, _ = strconv.Atoi(match[1])
+	}
+	if match[2] != "" {
+		minutes, _ = strconv.Atoi(match[2])
+	}
+	if match[3] != "" {
+		seconds, _ = strconv.Atoi(match[3])
+	}
+	if hours > 0 {
+		return fmt.Sprintf("%d:%02d:%02d", hours, minutes, seconds)
+	}
+	return fmt.Sprintf("%d:%02d", minutes, seconds)
+}
+
+type musicHTMLDocument struct {
+	Metadata  map[string]string
+	PageTitle string
+	Scripts   []string
+	JSONLD    []string
+}
+
+type musicMetadata struct {
+	Title       string
+	Artist      string
+	Album       string
+	Genre       string
+	Duration    string
+	ReleaseDate string
+	CoverURL    string
+	ExternalURL string
+}
+
+func parseMusicHTML(body io.Reader) (musicHTMLDocument, error) {
+	document, err := html.Parse(io.LimitReader(body, 3<<20))
+	if err != nil {
+		return musicHTMLDocument{}, err
+	}
+	parsed := musicHTMLDocument{Metadata: make(map[string]string)}
+	var walk func(*html.Node)
+	walk = func(node *html.Node) {
+		if node.Type == html.ElementNode {
+			attributes := htmlAttributes(node)
+			switch node.Data {
+			case "meta":
+				key := strings.ToLower(firstNonEmpty(attributes["property"], attributes["name"], attributes["itemprop"]))
+				if key != "" && attributes["content"] != "" {
+					parsed.Metadata[key] = strings.TrimSpace(attributes["content"])
+				}
+			case "title":
+				parsed.PageTitle = strings.TrimSpace(htmlText(node))
+			case "script":
+				script := strings.TrimSpace(htmlText(node))
+				if script != "" {
+					parsed.Scripts = append(parsed.Scripts, script)
+				}
+				if strings.EqualFold(attributes["type"], "application/ld+json") {
+					if script != "" {
+						parsed.JSONLD = append(parsed.JSONLD, script)
+					}
+				}
+			}
+		}
+		for child := node.FirstChild; child != nil; child = child.NextSibling {
+			walk(child)
+		}
+	}
+	walk(document)
+	return parsed, nil
+}
+
+func fetchMusicPreference(ctx context.Context, client *http.Client, rawURL string) (musicPreference, error) {
+	pageURL, provider, err := validateMusicURL(rawURL)
+	if err != nil {
+		return musicPreference{}, err
+	}
+	externalURL := pageURL.String()
+	pageURL = normalizeMusicPageURL(pageURL, provider)
+	if provider == musicProviderApple {
+		return fetchAppleMusicPreference(ctx, client, pageURL.String())
+	}
+
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, pageURL.String(), nil)
+	if err != nil {
+		return musicPreference{}, fmt.Errorf("create %s request: %w", provider, err)
+	}
+	request.Header.Set("Accept", "text/html,application/xhtml+xml")
+	request.Header.Set("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
+	request.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36")
+	response, err := client.Do(request)
+	if err != nil {
+		return musicPreference{}, fmt.Errorf("request %s page: %w", provider, err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return musicPreference{}, fmt.Errorf("%s returned %s", provider, response.Status)
+	}
+
+	document, err := parseMusicHTML(response.Body)
+	if err != nil {
+		return musicPreference{}, fmt.Errorf("parse %s page: %w", provider, err)
+	}
+	metadata := musicMetadataFromDocument(document, pageURL)
+	if metadata.Title == "" || metadata.Artist == "" || metadata.CoverURL == "" {
+		return musicPreference{}, fmt.Errorf("%s page did not contain complete song metadata", provider)
+	}
+	if provider == musicProviderQQ {
+		metadata.ExternalURL = externalURL
+	}
+	return musicPreference{
+		Title:       metadata.Title,
+		Artist:      metadata.Artist,
+		Album:       metadata.Album,
+		Genre:       metadata.Genre,
+		Duration:    metadata.Duration,
+		ReleaseDate: metadata.ReleaseDate,
+		CoverURL:    metadata.CoverURL,
+		ExternalURL: metadata.ExternalURL,
+	}, nil
+}
+
+func musicMetadataFromDocument(document musicHTMLDocument, pageURL *url.URL) musicMetadata {
+	var metadata musicMetadata
+	for _, raw := range document.JSONLD {
+		mergeMusicMetadata(&metadata, parseMusicJSONLD(raw))
+	}
+	for _, script := range document.Scripts {
+		mergeMusicMetadata(&metadata, parseMusicScript(script))
+	}
+	metadata.Title = firstNonEmpty(metadata.Title,
+		document.Metadata["music:title"], document.Metadata["og:title"],
+		document.Metadata["twitter:title"], document.Metadata["title"], document.PageTitle)
+	metadata.Artist = firstNonEmpty(metadata.Artist,
+		document.Metadata["music:musician"], document.Metadata["music:artist"],
+		document.Metadata["og:artist"], document.Metadata["artist"], document.Metadata["author"])
+	metadata.Album = firstNonEmpty(metadata.Album, document.Metadata["music:album"], document.Metadata["album"])
+	metadata.Genre = firstNonEmpty(metadata.Genre, document.Metadata["music:genre"], document.Metadata["genre"])
+	metadata.Duration = formatAppleMusicDuration(firstNonEmpty(metadata.Duration, document.Metadata["music:duration"], document.Metadata["duration"]))
+	metadata.ReleaseDate = strings.Split(firstNonEmpty(metadata.ReleaseDate, document.Metadata["music:release_date"], document.Metadata["release_date"], document.Metadata["date"]), "T")[0]
+	metadata.CoverURL = firstNonEmpty(metadata.CoverURL, document.Metadata["og:image"], document.Metadata["twitter:image"], document.Metadata["image"])
+	metadata.Title = cleanMusicTitle(metadata.Title)
+	description := firstNonEmpty(document.Metadata["description"], document.Metadata["og:description"])
+	if metadata.Artist == "" {
+		metadata.Artist = artistFromText(description)
+	}
+	if metadata.Album == "" {
+		metadata.Album = albumFromText(description)
+	}
+	metadata.CoverURL = resolveMusicAssetURL(metadata.CoverURL, pageURL)
+	canonical := firstNonEmpty(metadata.ExternalURL, document.Metadata["og:url"])
+	metadata.ExternalURL = pageURL.String()
+	if canonical != "" {
+		if candidate, provider, err := validateMusicURL(canonical); err == nil {
+			if pageProvider, ok := musicProviderForURL(pageURL); ok && provider == pageProvider {
+				metadata.ExternalURL = candidate.String()
+			}
+		}
+	}
+	return metadata
+}
+
+func mergeMusicMetadata(target *musicMetadata, source musicMetadata) {
+	if target.Title == "" {
+		target.Title = source.Title
+	}
+	if target.Artist == "" {
+		target.Artist = source.Artist
+	}
+	if target.Album == "" {
+		target.Album = source.Album
+	}
+	if target.Genre == "" {
+		target.Genre = source.Genre
+	}
+	if target.Duration == "" {
+		target.Duration = source.Duration
+	}
+	if target.ReleaseDate == "" {
+		target.ReleaseDate = source.ReleaseDate
+	}
+	if target.CoverURL == "" {
+		target.CoverURL = source.CoverURL
+	}
+	if target.ExternalURL == "" {
+		target.ExternalURL = source.ExternalURL
+	}
+}
+
+func parseMusicJSONLD(raw string) musicMetadata {
+	var value any
+	if json.Unmarshal([]byte(raw), &value) != nil {
+		return musicMetadata{}
+	}
+	var result musicMetadata
+	var walk func(any)
+	walk = func(current any) {
+		object, ok := current.(map[string]any)
+		if !ok {
+			if values, ok := current.([]any); ok {
+				for _, value := range values {
+					walk(value)
+				}
+			}
+			return
+		}
+		if isMusicJSONLDObject(object) {
+			mergeMusicMetadata(&result, musicMetadataFromJSONLDObject(object))
+		}
+		for _, value := range object {
+			walk(value)
+		}
+	}
+	walk(value)
+	return result
+}
+
+func isMusicJSONLDObject(object map[string]any) bool {
+	typeName := strings.ToLower(jsonValueString(object["@type"]))
+	return strings.Contains(typeName, "music") || object["byArtist"] != nil || object["inAlbum"] != nil || object["duration"] != nil
+}
+
+func musicMetadataFromJSONLDObject(object map[string]any) musicMetadata {
+	return musicMetadata{
+		Title:       jsonValueString(firstJSONValue(object, "name", "title")),
+		Artist:      jsonValueString(firstJSONValue(object, "byArtist", "artist", "creator")),
+		Album:       jsonValueString(firstJSONValue(object, "inAlbum", "album")),
+		Genre:       jsonValueString(firstJSONValue(object, "genre")),
+		Duration:    jsonValueString(firstJSONValue(object, "duration", "timeRequired")),
+		ReleaseDate: jsonValueString(firstJSONValue(object, "datePublished", "dateCreated", "releaseDate")),
+		CoverURL:    jsonValueString(firstJSONValue(object, "image", "thumbnailUrl")),
+		ExternalURL: jsonValueString(firstJSONValue(object, "url")),
+	}
+}
+
+func firstJSONValue(object map[string]any, keys ...string) any {
+	for _, key := range keys {
+		if value, ok := object[key]; ok {
+			return value
+		}
+	}
+	return nil
+}
+
+func jsonValueString(value any) string {
+	switch typed := value.(type) {
+	case string:
+		return strings.TrimSpace(typed)
+	case []any:
+		for _, item := range typed {
+			if result := jsonValueString(item); result != "" {
+				return result
+			}
+		}
+	case map[string]any:
+		return firstNonEmpty(jsonValueString(typed["name"]), jsonValueString(typed["url"]), jsonValueString(typed["@id"]))
+	case float64:
+		return strconv.FormatFloat(typed, 'f', -1, 64)
+	}
+	return ""
+}
+
+var musicScriptFieldPattern = regexp.MustCompile(`(?i)["']?(songname|songName|songtitle|songTitle|singer|singername|artist|artistName|albumname|albumName|album|albumpic_big|albumPic|cover|coverUrl|pic|duration|genre|name|title)["']?\s*[:=]\s*["']([^"']+)["']`)
+
+func parseMusicScript(script string) musicMetadata {
+	metadata := parseQQMusicSSRScript(script)
+	for _, match := range musicScriptFieldPattern.FindAllStringSubmatch(script, -1) {
+		if len(match) != 3 {
+			continue
+		}
+		value := strings.TrimSpace(match[2])
+		switch strings.ToLower(match[1]) {
+		case "songname", "songtitle", "name", "title":
+			metadata.Title = firstNonEmpty(metadata.Title, value)
+		case "singer", "singername", "artist", "artistname":
+			metadata.Artist = firstNonEmpty(metadata.Artist, value)
+		case "albumname", "album":
+			metadata.Album = firstNonEmpty(metadata.Album, value)
+		case "albumpic_big", "albumpic", "albumpicbig", "cover", "coverurl", "pic":
+			metadata.CoverURL = firstNonEmpty(metadata.CoverURL, value)
+		case "duration":
+			metadata.Duration = firstNonEmpty(metadata.Duration, value)
+		case "genre":
+			metadata.Genre = firstNonEmpty(metadata.Genre, value)
+		}
+	}
+	return metadata
+}
+
+func parseQQMusicSSRScript(script string) musicMetadata {
+	payload := javascriptStringValue(script, "window.__ssrFirstPageData__")
+	if payload == "" {
+		return musicMetadata{}
+	}
+	var data struct {
+		Song struct {
+			Name       string `json:"name"`
+			Title      string `json:"title"`
+			Interval   int    `json:"interval"`
+			TimePublic string `json:"time_public"`
+			Img        string `json:"img"`
+			Singer     []struct {
+				Name  string `json:"name"`
+				Title string `json:"title"`
+			} `json:"singer"`
+			Album struct {
+				Name  string `json:"name"`
+				Title string `json:"title"`
+			} `json:"album"`
+		} `json:"song"`
+	}
+	if json.Unmarshal([]byte(payload), &data) != nil || data.Song.Name == "" {
+		return musicMetadata{}
+	}
+	artist := ""
+	if len(data.Song.Singer) > 0 {
+		artist = firstNonEmpty(data.Song.Singer[0].Name, data.Song.Singer[0].Title)
+	}
+	duration := ""
+	if data.Song.Interval > 0 {
+		duration = fmt.Sprintf("%d:%02d", data.Song.Interval/60, data.Song.Interval%60)
+	}
+	return musicMetadata{
+		Title:       firstNonEmpty(data.Song.Name, data.Song.Title),
+		Artist:      artist,
+		Album:       firstNonEmpty(data.Song.Album.Name, data.Song.Album.Title),
+		Duration:    duration,
+		ReleaseDate: data.Song.TimePublic,
+		CoverURL:    data.Song.Img,
+	}
+}
+
+func javascriptStringValue(script, marker string) string {
+	markerIndex := strings.Index(script, marker)
+	if markerIndex < 0 {
+		return ""
+	}
+	remainder := strings.TrimSpace(script[markerIndex+len(marker):])
+	if !strings.HasPrefix(remainder, "=") {
+		return ""
+	}
+	remainder = strings.TrimSpace(strings.TrimPrefix(remainder, "="))
+	if !strings.HasPrefix(remainder, `"`) {
+		return ""
+	}
+	escaped := false
+	for index := 1; index < len(remainder); index++ {
+		switch remainder[index] {
+		case '\\':
+			escaped = !escaped
+		case '"':
+			if !escaped {
+				value, err := strconv.Unquote(remainder[:index+1])
+				if err == nil {
+					return value
+				}
+				return ""
+			}
+			escaped = false
+		default:
+			escaped = false
+		}
+	}
+	return ""
+}
+
+func cleanMusicTitle(title string) string {
+	title = strings.TrimSpace(title)
+	for _, suffix := range []string{" - QQ音乐", " - 网易云音乐", " - NetEase Cloud Music", " - Apple Music"} {
+		title = strings.TrimSuffix(title, suffix)
+	}
+	title = strings.TrimSpace(strings.TrimSuffix(title, " (歌曲)"))
+	return title
+}
+
+func artistFromText(value string) string {
+	for _, pattern := range []string{`(?i)(?:歌手|艺人|artist)\s*[：:]\s*([^|｜,，;；]+)`, `(?i)由\s*([^，,。]+?)\s*演唱`, `(?i)(?:by)\s+([^|｜,，;；]+)`} {
+		match := regexp.MustCompile(pattern).FindStringSubmatch(value)
+		if len(match) == 2 {
+			return strings.TrimSpace(match[1])
+		}
+	}
+	return ""
+}
+
+func albumFromText(value string) string {
+	for _, pattern := range []string{`(?i)(?:专辑|album)\s*[：:]\s*([^|｜,，;；]+)`, `收录于《([^》]+)》`} {
+		match := regexp.MustCompile(pattern).FindStringSubmatch(value)
+		if len(match) == 2 {
+			return strings.TrimSpace(match[1])
+		}
+	}
+	return ""
+}
+
+func resolveMusicAssetURL(raw string, pageURL *url.URL) string {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || parsed.String() == "" {
+		return ""
+	}
+	if !parsed.IsAbs() {
+		parsed = pageURL.ResolveReference(parsed)
+	}
+	if parsed.User != nil || (parsed.Scheme != "https" && parsed.Scheme != "http") {
+		return ""
+	}
+	if parsed.Scheme == "http" {
+		parsed.Scheme = "https"
+	}
+	return parsed.String()
+}
+
+func musicPreferencesHandler(store musicPreferenceStore) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		preferences, err := store.ListMusicPreferences(c.Request.Context())
+		if err != nil {
+			log.Printf("load music preferences: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "music data is temporarily unavailable"})
+			return
+		}
+		c.JSON(http.StatusOK, preferences)
+	}
+}
+
+func musicImportHandler(client *http.Client, store musicPreferenceStore) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var payload struct {
+			URL string `json:"url"`
+		}
+		if err := c.ShouldBindJSON(&payload); err != nil || strings.TrimSpace(payload.URL) == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "a supported music URL is required"})
+			return
+		}
+		preference, err := fetchMusicPreference(c.Request.Context(), client, payload.URL)
+		if errors.Is(err, errInvalidMusicURL) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "only HTTPS Apple Music, QQ Music, and NetEase Cloud Music URLs are supported"})
+			return
+		}
+		if err != nil {
+			log.Printf("import music metadata: %v", err)
+			c.JSON(http.StatusBadGateway, gin.H{"error": "music metadata could not be read"})
+			return
+		}
+		saved, err := store.SaveMusicPreference(c.Request.Context(), preference)
+		if err != nil {
+			log.Printf("save music preference: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "music data could not be saved"})
+			return
+		}
+		c.JSON(http.StatusOK, saved)
+	}
+}
+
+func musicDeleteHandler(store musicPreferenceStore) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+		if err != nil || id < 1 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid music id"})
+			return
+		}
+		if err := store.DeleteMusicPreference(c.Request.Context(), id); errors.Is(err, errMusicPreferenceNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "music preference not found"})
+			return
+		} else if err != nil {
+			log.Printf("delete music preference: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "music data could not be deleted"})
+			return
+		}
+		c.Status(http.StatusNoContent)
+	}
 }
 
 func steamOverviewHandler(store steamOverviewStore) gin.HandlerFunc {

@@ -82,6 +82,22 @@ type SteamOverview = {
   recentlyPlayed: SteamGame[];
 };
 
+type MusicPreference = {
+  id?: number;
+  title: string;
+  artist: string;
+  album: string;
+  genre: string;
+  duration: string;
+  releaseDate: string;
+  cover: string;
+  href: string;
+};
+
+const fallbackMusicPreferences: MusicPreference[] = [
+  { title: "Serenade (KARINA & WINTER)", artist: "aespa", album: "SYNK : aeXIS LINE - 2026 Special Digital Single - Single", genre: "K-Pop", duration: "3:05", releaseDate: "2026-08-09", cover: "https://is1-ssl.mzstatic.com/image/thumb/Music211/v4/cc/41/23/cc4123a6-c1c0-7e86-e44a-2f0cb1f0e081/aespa_aeXIS_2026_-F.jpg/486x486bb.png", href: "https://music.apple.com/cn/album/serenade-karina-winter/6797481676?i=6797481677" },
+];
+
 type ContributionCell = Omit<GitHubContributionDay, "date"> & {
   date: string | null;
 };
@@ -702,6 +718,7 @@ function PublicApp() {
   const [profileState, setProfileState] = useState<RepositoryState>("loading");
   const [steamOverview, setSteamOverview] = useState<SteamOverview | null>(null);
   const [steamState, setSteamState] = useState<SteamState>("idle");
+  const [musicPreferences, setMusicPreferences] = useState<MusicPreference[]>(fallbackMusicPreferences);
   const [developerToolsOpen, setDeveloperToolsOpen] = useState(false);
   const [copyNoticeVisible, setCopyNoticeVisible] = useState(false);
   const [activeCategory, setActiveCategory] = useState("全部文章");
@@ -827,6 +844,23 @@ function PublicApp() {
 
     return () => controller.abort();
   }, [view]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    fetch("/api/music", { signal: controller.signal })
+      .then((response) => {
+        if (!response.ok) throw new Error("Music preference request failed");
+        return response.json() as Promise<MusicPreference[]>;
+      })
+      .then((data) => {
+        if (!Array.isArray(data)) throw new Error("Invalid music preference response");
+        if (data.length > 0) setMusicPreferences(data);
+      })
+      .catch((error: unknown) => {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+      });
+    return () => controller.abort();
+  }, []);
 
   useEffect(() => {
     let hideCopyNotice: number | undefined;
@@ -970,7 +1004,7 @@ function PublicApp() {
         {view === "notes" && <Notes setSelectedNote={openNote} />}
         {view === "gallery" && <Gallery creations={[...publishedCreations, ...creations]} setSelectedCreation={openCreation} />}
         {view === "studio" && <Studio contributions={githubContributions} contributionState={contributionState} repositories={githubRepositories} repositoryState={repositoryState} profile={githubProfile} profileState={profileState} />}
-        {view === "entertainment" && <SteamEntertainment overview={steamOverview} state={steamState} />}
+        {view === "entertainment" && <SteamEntertainment overview={steamOverview} state={steamState} musicPreferences={musicPreferences} />}
         {view === "guestbook" && <Guestbook visitor={visitor} message={message} setVisitor={setVisitor} setMessage={setMessage} comments={comments} submitMessage={submitMessage} />}
       </div>
 
@@ -1192,20 +1226,36 @@ function Studio({ contributions, contributionState, repositories, repositoryStat
   </section>;
 }
 
-function SteamEntertainment({ overview, state }: { overview: SteamOverview | null; state: SteamState }) {
-  if (state !== "ready" || !overview) return <section className="steam-page steam-state"><p>{state === "loading" ? "正在同步 Steam 数据" : "Steam 数据暂不可用"}</p></section>;
-  const recentGames = overview.recentlyPlayed.filter((game) => !isHiddenSteamGame(game));
-  const libraryGames = overview.games.filter((game) => !isHiddenSteamGame(game));
+function SteamEntertainment({ overview, state, musicPreferences }: { overview: SteamOverview | null; state: SteamState; musicPreferences: MusicPreference[] }) {
+  const showSteam = state === "ready" && overview !== null;
+  const recentGames = overview?.recentlyPlayed.filter((game) => !isHiddenSteamGame(game)) ?? [];
+  const libraryGames = overview?.games.filter((game) => !isHiddenSteamGame(game)) ?? [];
 
-  return <section className="steam-page">
-    <header className="steam-profile">
-      <div><h1>{overview.profile.name}</h1><a href={overview.profile.profileUrl} target="_blank" rel="noreferrer">Steam 个人主页</a></div>
-      <div className="steam-profile-cards"><SteamProfileStatCard title="游戏库" value={`${overview.gameCount}`} detail="拥有游戏" /><SteamProfileStatCard title="游玩时长" value={formatSteamPlaytime(overview.totalPlaytime)} detail="累计时长" /></div>
-    </header>
-    <div className="steam-games-zone">
-      {recentGames.length > 0 && <section className="steam-section"><h2>最近游玩</h2><SteamGameCoverStrip games={recentGames} recent /></section>}
-      <section className="steam-section"><h2>游戏库</h2><SteamGameAccordion games={libraryGames} /></section>
-    </div>
+  return <section className="steam-page entertainment-page">
+    {showSteam && overview ? <>
+      <header className="steam-profile">
+        <div><h1>{overview.profile.name}</h1><a href={overview.profile.profileUrl} target="_blank" rel="noreferrer">Steam 个人主页</a></div>
+        <div className="steam-profile-cards"><SteamProfileStatCard title="游戏库" value={`${overview.gameCount}`} detail="拥有游戏" /><SteamProfileStatCard title="游玩时长" value={formatSteamPlaytime(overview.totalPlaytime)} detail="累计时长" /></div>
+      </header>
+      <div className="steam-games-zone">
+        {recentGames.length > 0 && <section className="steam-section"><h2>最近游玩</h2><SteamGameCoverStrip games={recentGames} recent /></section>}
+        <section className="steam-section"><h2>游戏库</h2><SteamGameAccordion games={libraryGames} /></section>
+      </div>
+    </> : <div className="steam-state"><p>{state === "loading" ? "正在同步 Steam 数据" : "Steam 数据暂不可用"}</p></div>}
+    <MusicSection musicPreferences={musicPreferences} />
+  </section>;
+}
+
+function MusicSection({ musicPreferences }: { musicPreferences: MusicPreference[] }) {
+  return <section className="entertainment-music" aria-labelledby="music-preferences-title">
+    <header className="music-section-heading"><h2 id="music-preferences-title">音乐偏好</h2></header>
+    <div className="music-grid">{musicPreferences.map((track, index) => <a className={`music-card music-card-theme-${index}`} href={track.href} key={`${track.artist}-${track.title}`} target="_blank" rel="noreferrer">
+      <div className="music-card-overlay" aria-hidden="true" />
+      <div className="music-card-circle"><img src={track.cover} alt={`${track.artist} - ${track.title}`} loading="lazy" /></div>
+      <p>{track.title}</p>
+      <small>{track.artist} · {track.album}</small>
+      <span className="music-card-meta">{track.genre} · {track.duration} · {track.releaseDate}</span>
+    </a>)}</div>
   </section>;
 }
 

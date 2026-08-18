@@ -1,5 +1,5 @@
-import { ChangeEvent, FormEvent, useState } from "react";
-import { ArrowLeft, BookOpen, Code2, Eye, FileText, Gamepad2, GitBranch, Image, LayoutDashboard, MessageSquare, RefreshCw, Save, Send, Trash2, Upload, X } from "lucide-react";
+import { ChangeEvent, FormEvent, useEffect, useState } from "react";
+import { ArrowLeft, BookOpen, Code2, Eye, FileText, Gamepad2, GitBranch, Image, LayoutDashboard, MessageSquare, Music2, RefreshCw, Save, Send, Trash2, Upload, X } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
@@ -11,6 +11,7 @@ const adminNavItems = [
   { label: "图库发布", icon: Image },
   { label: "项目同步", icon: Code2 },
   { label: "Steam 同步", icon: Gamepad2 },
+  { label: "音乐管理", icon: Music2 },
   { label: "留言管理", icon: MessageSquare },
 ] as const;
 
@@ -78,6 +79,18 @@ type SteamOverview = {
   games: Array<{ appId: number }>;
   recentlyPlayed: Array<{ appId: number }>;
   refreshedAt: string;
+};
+
+type MusicPreference = {
+  id: number;
+  title: string;
+  artist: string;
+  album: string;
+  genre: string;
+  duration: string;
+  releaseDate: string;
+  cover: string;
+  href: string;
 };
 
 const articleEditorConfig: MarkdownEditorConfig = {
@@ -163,6 +176,7 @@ function AdminApp() {
         {activeSection === "图库发布" && <SimplePublisher key={activeSection} config={galleryPublisherConfig} back={() => openSection("总览")} />}
         {activeSection === "项目同步" && <ProjectSync back={() => openSection("总览")} />}
         {activeSection === "Steam 同步" && <SteamSync back={() => openSection("总览")} />}
+        {activeSection === "音乐管理" && <MusicManager back={() => openSection("总览")} />}
         {activeSection === "留言管理" && <GuestbookManager back={() => openSection("总览")} />}
       </section>
     </main>
@@ -316,6 +330,62 @@ function SteamSync({ back }: { back: () => void }) {
 
   const refreshedAt = data?.refreshedAt ? new Intl.DateTimeFormat("zh-CN", { dateStyle: "medium", timeStyle: "medium", hour12: false }).format(new Date(data.refreshedAt)) : "";
   return <section className="admin-manager-screen"><WorkspaceHeader title="Steam 同步" back={back} /><div className="admin-project-sync"><header><button className="admin-primary-button" type="button" onClick={refreshSteam} disabled={syncState === "syncing"}><RefreshCw className={syncState === "syncing" ? "is-spinning" : ""} size={16} aria-hidden="true" />{syncState === "syncing" ? "刷新中" : "刷新 Steam"}</button>{refreshedAt && <time>{refreshedAt}</time>}</header>{syncState === "failed" && <p className="admin-sync-error" role="status">刷新失败</p>}{data && <div className="admin-steam-sync-stats"><div><strong>{data.gameCount}</strong><span>游戏库</span></div><div><strong>{data.recentlyPlayed.length}</strong><span>最近游玩</span></div></div>}</div></section>;
+}
+
+function MusicManager({ back }: { back: () => void }) {
+  const [preferences, setPreferences] = useState<MusicPreference[]>([]);
+  const [url, setURL] = useState("");
+  const [importState, setImportState] = useState<"idle" | "importing" | "done" | "failed">("idle");
+
+  useEffect(() => {
+    const controller = new AbortController();
+    fetch("/api/music", { signal: controller.signal })
+      .then((response) => {
+        if (!response.ok) throw new Error("Music preference request failed");
+        return response.json() as Promise<MusicPreference[]>;
+      })
+      .then((data) => {
+        if (!Array.isArray(data)) throw new Error("Invalid music preference response");
+        setPreferences(data);
+      })
+      .catch((error: unknown) => {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+      });
+    return () => controller.abort();
+  }, []);
+
+  async function importMusic(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!url.trim()) return;
+    setImportState("importing");
+    try {
+      const response = await fetch("/api/admin/music/import", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: url.trim() }),
+      });
+      if (!response.ok) throw new Error("Music import failed");
+      const preference = await response.json() as MusicPreference;
+      if (!preference.id || !preference.title || !preference.href) throw new Error("Invalid imported music preference");
+      setPreferences((current) => [preference, ...current.filter((item) => item.id !== preference.id)]);
+      setURL("");
+      setImportState("done");
+    } catch {
+      setImportState("failed");
+    }
+  }
+
+  async function deleteMusic(id: number) {
+    try {
+      const response = await fetch(`/api/admin/music/${id}`, { method: "DELETE" });
+      if (!response.ok) throw new Error("Music deletion failed");
+      setPreferences((current) => current.filter((item) => item.id !== id));
+    } catch {
+      setImportState("failed");
+    }
+  }
+
+  return <section className="admin-manager-screen"><WorkspaceHeader title="音乐管理" back={back} /><div className="admin-music-manager"><form className="admin-music-import" onSubmit={importMusic}><label>音乐链接<input aria-label="音乐链接" type="url" value={url} onChange={(event) => { setURL(event.target.value); setImportState("idle"); }} placeholder="Apple Music、QQ 音乐或网易云音乐链接" required /></label><button className="admin-primary-button" type="submit" disabled={importState === "importing"}>{importState === "importing" ? <RefreshCw className="is-spinning" size={16} aria-hidden="true" /> : <Music2 size={16} aria-hidden="true" />}{importState === "importing" ? "读取中" : "导入音乐"}</button></form>{importState === "done" && <p className="admin-music-status" role="status">已导入</p>}{importState === "failed" && <p className="admin-sync-error" role="status">导入失败</p>}<div className="admin-music-list">{preferences.map((preference) => <article key={preference.id}><img src={preference.cover} alt="" /><div><strong>{preference.title}</strong><p>{preference.artist}{preference.album ? ` · ${preference.album}` : ""}</p></div><button className="admin-delete-button" type="button" aria-label={`删除 ${preference.title}`} title="删除" onClick={() => deleteMusic(preference.id)}><Trash2 size={16} aria-hidden="true" /></button></article>)}</div></div></section>;
 }
 
 function GuestbookManager({ back }: { back: () => void }) {
