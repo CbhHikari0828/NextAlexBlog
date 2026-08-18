@@ -26,6 +26,28 @@ type memorySteamOverviewStore struct {
 	saveCount   int
 }
 
+type memoryGitHubOverviewStore struct {
+	overview    githubOverview
+	refreshedAt time.Time
+	hasSnapshot bool
+	saveCount   int
+}
+
+func (store *memoryGitHubOverviewStore) LoadGitHubOverview(context.Context) (githubOverview, time.Time, error) {
+	if !store.hasSnapshot {
+		return githubOverview{}, time.Time{}, errGitHubOverviewNotFound
+	}
+	return store.overview, store.refreshedAt, nil
+}
+
+func (store *memoryGitHubOverviewStore) SaveGitHubOverview(_ context.Context, overview githubOverview) (time.Time, error) {
+	store.overview = overview
+	store.refreshedAt = time.Date(2026, time.August, 18, 12, 0, 0, 0, time.UTC)
+	store.hasSnapshot = true
+	store.saveCount++
+	return store.refreshedAt, nil
+}
+
 func (store *memorySteamOverviewStore) LoadSteamOverview(context.Context) (steamOverview, time.Time, error) {
 	if !store.hasSnapshot {
 		return steamOverview{}, time.Time{}, errSteamOverviewNotFound
@@ -41,34 +63,62 @@ func (store *memorySteamOverviewStore) SaveSteamOverview(_ context.Context, over
 	return store.refreshedAt, nil
 }
 
-func TestGithubRepositoryRefreshBypassesCache(t *testing.T) {
+func TestGitHubPublicReadsUseSnapshot(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	requestCount := 0
-	client := &http.Client{Transport: roundTripperFunc(func(request *http.Request) (*http.Response, error) {
-		requestCount++
-		return &http.Response{
-			StatusCode: http.StatusOK,
-			Header:     make(http.Header),
-			Body: io.NopCloser(strings.NewReader(`[
-				{"name":"NextAlexBlog","html_url":"https://github.com/CbhHikari0828/NextAlexBlog","stargazers_count":1,"forks_count":1,"updated_at":"2026-08-17T00:00:00Z"}
-			]`)),
-			Request: request,
-		}, nil
-	})}
+	refreshedAt := time.Date(2026, time.August, 18, 11, 0, 0, 0, time.UTC)
+	store := &memoryGitHubOverviewStore{hasSnapshot: true, refreshedAt: refreshedAt, overview: githubOverview{
+		Profile:       githubProfile{Username: "CbhHikari0828", RepositoryCount: 12, Stars: 70, Forks: 18, Followers: 32},
+		Repositories:  []githubRepository{{Name: "NextAlexBlog", HTMLURL: "https://github.com/CbhHikari0828/NextAlexBlog"}},
+		Contributions: githubContributions{Username: "CbhHikari0828", Year: 2026, Total: 4},
+	}}
 
 	router := gin.New()
-	router.GET("/repositories", githubRepositoriesHandler(client, "CbhHikari0828", newRepositoryCache()))
-
-	for _, target := range []string{"/repositories?limit=1", "/repositories?limit=1", "/repositories?limit=1&refresh=1"} {
+	router.GET("/repositories", githubRepositoriesSnapshotHandler(store))
+	router.GET("/profile", githubProfileSnapshotHandler(store))
+	router.GET("/contributions", githubContributionsSnapshotHandler(store))
+	for _, target := range []string{"/repositories?limit=1", "/profile", "/contributions?year=2026"} {
 		response := httptest.NewRecorder()
 		router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, target, nil))
 		if response.Code != http.StatusOK {
 			t.Fatalf("GET %s returned %d", target, response.Code)
 		}
 	}
+	if store.saveCount != 0 {
+		t.Fatalf("public reads changed snapshot: saves=%d", store.saveCount)
+	}
+}
 
-	if requestCount != 2 {
-		t.Fatalf("GitHub requests = %d, want 2", requestCount)
+func TestGitHubRefreshStoresSnapshotForPublicReads(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	requestCount := 0
+	client := &http.Client{Transport: roundTripperFunc(func(request *http.Request) (*http.Response, error) {
+		requestCount++
+		body := `{"login":"CbhHikari0828","public_repos":12,"followers":32}`
+		switch {
+		case strings.Contains(request.URL.Path, "/repos"):
+			body = `[{"name":"one","html_url":"https://github.com/CbhHikari0828/one","stargazers_count":68,"forks_count":15,"updated_at":"2026-08-18T00:00:00Z"},{"name":"two","html_url":"https://github.com/CbhHikari0828/two","stargazers_count":2,"forks_count":3,"updated_at":"2026-08-18T00:00:00Z"}]`
+		case strings.Contains(request.URL.Path, "/contributions"):
+			body = `<table><td class="ContributionCalendar-day" data-date="2026-08-17" data-level="2" id="day-1"></td><tool-tip for="day-1">4 contributions</tool-tip></table>`
+		}
+		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body)), Request: request}, nil
+	})}
+
+	store := &memoryGitHubOverviewStore{}
+	router := gin.New()
+	router.POST("/admin/github/refresh", githubRefreshHandler(client, "CbhHikari0828", store))
+	router.GET("/profile", githubProfileSnapshotHandler(store))
+	refreshResponse := httptest.NewRecorder()
+	router.ServeHTTP(refreshResponse, httptest.NewRequest(http.MethodPost, "/admin/github/refresh", nil))
+	if refreshResponse.Code != http.StatusOK {
+		t.Fatalf("POST /admin/github/refresh returned %d", refreshResponse.Code)
+	}
+	if requestCount != 3 || store.saveCount != 1 || store.overview.Profile.Stars != 70 {
+		t.Fatalf("unexpected refresh result: requests=%d saves=%d stars=%d", requestCount, store.saveCount, store.overview.Profile.Stars)
+	}
+	publicResponse := httptest.NewRecorder()
+	router.ServeHTTP(publicResponse, httptest.NewRequest(http.MethodGet, "/profile", nil))
+	if publicResponse.Code != http.StatusOK || requestCount != 3 {
+		t.Fatalf("public GitHub read made an external request or failed: status=%d requests=%d", publicResponse.Code, requestCount)
 	}
 }
 

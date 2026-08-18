@@ -15,7 +15,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -23,8 +22,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/net/html"
 )
-
-const githubContributionCacheDuration = 15 * time.Minute
 
 var contributionCountPattern = regexp.MustCompile(`([0-9][0-9,]*)\s+contribution`)
 var steamIDPattern = regexp.MustCompile(`^\d{17}$`)
@@ -42,20 +39,6 @@ type githubContributions struct {
 	Days     []contributionDay `json:"days"`
 }
 
-type contributionCacheEntry struct {
-	data      githubContributions
-	expiresAt time.Time
-}
-
-type contributionCache struct {
-	mu      sync.Mutex
-	entries map[string]contributionCacheEntry
-}
-
-func newContributionCache() *contributionCache {
-	return &contributionCache{entries: make(map[string]contributionCacheEntry)}
-}
-
 type githubRepository struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
@@ -71,14 +54,82 @@ type githubRepositories struct {
 	Repositories []githubRepository `json:"repositories"`
 }
 
-type repositoryCacheEntry struct {
-	data      githubRepositories
-	expiresAt time.Time
+type githubProfile struct {
+	Username        string `json:"username"`
+	RepositoryCount int    `json:"repositoryCount"`
+	Stars           int    `json:"stars"`
+	Forks           int    `json:"forks"`
+	Followers       int    `json:"followers"`
 }
 
-type repositoryCache struct {
-	mu      sync.Mutex
-	entries map[string]repositoryCacheEntry
+type githubOverview struct {
+	Profile       githubProfile       `json:"profile"`
+	Repositories  []githubRepository  `json:"repositories"`
+	Contributions githubContributions `json:"contributions"`
+}
+
+type githubOverviewResponse struct {
+	Profile       githubProfile       `json:"profile"`
+	Repositories  []githubRepository  `json:"repositories"`
+	Contributions githubContributions `json:"contributions"`
+	RefreshedAt   time.Time           `json:"refreshedAt"`
+}
+
+type githubOverviewStore interface {
+	LoadGitHubOverview(context.Context) (githubOverview, time.Time, error)
+	SaveGitHubOverview(context.Context, githubOverview) (time.Time, error)
+}
+
+type postgresGitHubOverviewStore struct {
+	pool *pgxpool.Pool
+}
+
+var errGitHubOverviewNotFound = errors.New("GitHub overview snapshot not found")
+
+func (store postgresGitHubOverviewStore) LoadGitHubOverview(ctx context.Context) (githubOverview, time.Time, error) {
+	var payload []byte
+	var refreshedAt time.Time
+	err := store.pool.QueryRow(ctx, `SELECT payload, refreshed_at FROM github_overview_snapshots WHERE id = 1`).Scan(&payload, &refreshedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return githubOverview{}, time.Time{}, errGitHubOverviewNotFound
+	}
+	if err != nil {
+		return githubOverview{}, time.Time{}, fmt.Errorf("load GitHub overview snapshot: %w", err)
+	}
+
+	var overview githubOverview
+	if err := json.Unmarshal(payload, &overview); err != nil {
+		return githubOverview{}, time.Time{}, fmt.Errorf("decode GitHub overview snapshot: %w", err)
+	}
+	return overview, refreshedAt, nil
+}
+
+func (store postgresGitHubOverviewStore) SaveGitHubOverview(ctx context.Context, overview githubOverview) (time.Time, error) {
+	payload, err := json.Marshal(overview)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("encode GitHub overview snapshot: %w", err)
+	}
+
+	var refreshedAt time.Time
+	err = store.pool.QueryRow(ctx, `
+		INSERT INTO github_overview_snapshots (id, payload, refreshed_at)
+		VALUES (1, $1::jsonb, NOW())
+		ON CONFLICT (id) DO UPDATE SET payload = EXCLUDED.payload, refreshed_at = NOW()
+		RETURNING refreshed_at
+	`, string(payload)).Scan(&refreshedAt)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("save GitHub overview snapshot: %w", err)
+	}
+	return refreshedAt, nil
+}
+
+func githubOverviewResponseFrom(overview githubOverview, refreshedAt time.Time) githubOverviewResponse {
+	return githubOverviewResponse{
+		Profile:       overview.Profile,
+		Repositories:  overview.Repositories,
+		Contributions: overview.Contributions,
+		RefreshedAt:   refreshedAt,
+	}
 }
 
 type steamProfile struct {
@@ -179,10 +230,6 @@ func steamOverviewResponseFrom(overview steamOverview, refreshedAt time.Time) st
 	}
 }
 
-func newRepositoryCache() *repositoryCache {
-	return &repositoryCache{entries: make(map[string]repositoryCacheEntry)}
-}
-
 func main() {
 	loadLocalEnvironment()
 	databaseURL := envOrDefault(
@@ -205,24 +252,19 @@ func main() {
 	if err := pool.Ping(pingContext); err != nil {
 		log.Fatalf("connect to database: %v", err)
 	}
-	if err := ensureSteamOverviewSnapshotTable(context.Background(), pool); err != nil {
-		log.Fatalf("ensure Steam overview snapshot table: %v", err)
+	if err := ensureOverviewSnapshotTables(context.Background(), pool); err != nil {
+		log.Fatalf("ensure overview snapshot tables: %v", err)
 	}
 
 	router := gin.New()
 	router.Use(gin.Logger(), gin.Recovery())
 	router.GET("/api/health", healthHandler(pool))
 	githubClient := &http.Client{Timeout: 10 * time.Second}
-	router.GET("/api/github/contributions", githubContributionsHandler(
-		githubClient,
-		githubUsername,
-		newContributionCache(),
-	))
-	router.GET("/api/github/repositories", githubRepositoriesHandler(
-		githubClient,
-		githubUsername,
-		newRepositoryCache(),
-	))
+	githubStore := postgresGitHubOverviewStore{pool: pool}
+	router.GET("/api/github/contributions", githubContributionsSnapshotHandler(githubStore))
+	router.GET("/api/github/repositories", githubRepositoriesSnapshotHandler(githubStore))
+	router.GET("/api/github/profile", githubProfileSnapshotHandler(githubStore))
+	router.POST("/api/admin/github/refresh", githubRefreshHandler(githubClient, githubUsername, githubStore))
 	steamStore := postgresSteamOverviewStore{pool: pool}
 	router.GET("/api/steam/overview", steamOverviewHandler(steamStore))
 	router.POST("/api/admin/steam/refresh", steamRefreshHandler(githubClient, steamAPIKey, steamID, steamStore))
@@ -239,89 +281,93 @@ func main() {
 	}
 }
 
-func githubContributionsHandler(client *http.Client, username string, cache *contributionCache) gin.HandlerFunc {
+func githubSnapshotError(c *gin.Context, err error) bool {
+	if errors.Is(err, errGitHubOverviewNotFound) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "GitHub data has not been refreshed yet"})
+		return true
+	}
+	if err != nil {
+		log.Printf("load GitHub overview snapshot: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "GitHub data is temporarily unavailable"})
+		return true
+	}
+	return false
+}
+
+func githubContributionsSnapshotHandler(store githubOverviewStore) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		year := time.Now().Year()
-		if requestedYear := c.Query("year"); requestedYear != "" {
-			parsedYear, err := strconv.Atoi(requestedYear)
-			if err != nil || parsedYear < 2008 || parsedYear > time.Now().Year() {
-				c.JSON(http.StatusBadRequest, gin.H{"error": "year must be between 2008 and the current year"})
-				return
-			}
-			year = parsedYear
-		}
-
-		cacheKey := fmt.Sprintf("%s:%d", username, year)
-		cache.mu.Lock()
-		entry, found := cache.entries[cacheKey]
-		cache.mu.Unlock()
-		if found && time.Now().Before(entry.expiresAt) {
-			c.JSON(http.StatusOK, entry.data)
+		overview, _, err := store.LoadGitHubOverview(c.Request.Context())
+		if githubSnapshotError(c, err) {
 			return
 		}
-
-		contributions, err := fetchGitHubContributions(c.Request.Context(), client, username, year)
-		if err != nil {
-			log.Printf("fetch GitHub contributions for %s: %v", username, err)
-			c.JSON(http.StatusBadGateway, gin.H{"error": "GitHub contribution data is temporarily unavailable"})
-			return
-		}
-
-		cache.mu.Lock()
-		cache.entries[cacheKey] = contributionCacheEntry{
-			data:      contributions,
-			expiresAt: time.Now().Add(githubContributionCacheDuration),
-		}
-		cache.mu.Unlock()
-
-		c.JSON(http.StatusOK, contributions)
+		c.JSON(http.StatusOK, overview.Contributions)
 	}
 }
 
-func githubRepositoriesHandler(client *http.Client, username string, cache *repositoryCache) gin.HandlerFunc {
+func githubRepositoriesSnapshotHandler(store githubOverviewStore) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		overview, _, err := store.LoadGitHubOverview(c.Request.Context())
+		if githubSnapshotError(c, err) {
+			return
+		}
+
 		limit := 3
 		if requestedLimit := c.Query("limit"); requestedLimit != "" {
-			parsedLimit, err := strconv.Atoi(requestedLimit)
-			if err != nil || parsedLimit < 1 || parsedLimit > 6 {
-				c.JSON(http.StatusBadRequest, gin.H{"error": "limit must be between 1 and 6"})
+			parsedLimit, parseErr := strconv.Atoi(requestedLimit)
+			if parseErr != nil || parsedLimit < 1 || parsedLimit > 100 {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "limit must be between 1 and 100"})
 				return
 			}
 			limit = parsedLimit
 		}
-
-		cacheKey := fmt.Sprintf("%s:%d", username, limit)
-		if c.Query("refresh") != "1" {
-			cache.mu.Lock()
-			entry, found := cache.entries[cacheKey]
-			cache.mu.Unlock()
-			if found && time.Now().Before(entry.expiresAt) {
-				c.JSON(http.StatusOK, entry.data)
-				return
-			}
+		if limit < len(overview.Repositories) {
+			overview.Repositories = overview.Repositories[:limit]
 		}
-
-		repositories, err := fetchGitHubRepositories(c.Request.Context(), client, username, limit)
-		if err != nil {
-			log.Printf("fetch GitHub repositories for %s: %v", username, err)
-			c.JSON(http.StatusBadGateway, gin.H{"error": "GitHub repository data is temporarily unavailable"})
-			return
-		}
-
-		cache.mu.Lock()
-		cache.entries[cacheKey] = repositoryCacheEntry{
-			data:      repositories,
-			expiresAt: time.Now().Add(githubContributionCacheDuration),
-		}
-		cache.mu.Unlock()
-
-		c.JSON(http.StatusOK, repositories)
+		c.JSON(http.StatusOK, githubRepositories{Username: overview.Profile.Username, Repositories: overview.Repositories})
 	}
 }
 
-func ensureSteamOverviewSnapshotTable(ctx context.Context, pool *pgxpool.Pool) error {
-	_, err := pool.Exec(ctx, `
+func githubProfileSnapshotHandler(store githubOverviewStore) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		overview, _, err := store.LoadGitHubOverview(c.Request.Context())
+		if githubSnapshotError(c, err) {
+			return
+		}
+		c.JSON(http.StatusOK, overview.Profile)
+	}
+}
+
+func githubRefreshHandler(client *http.Client, username string, store githubOverviewStore) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		overview, err := fetchGitHubOverview(c.Request.Context(), client, username, time.Now().Year())
+		if err != nil {
+			log.Printf("refresh GitHub overview for %s: %v", username, err)
+			c.JSON(http.StatusBadGateway, gin.H{"error": "GitHub data is temporarily unavailable"})
+			return
+		}
+
+		refreshedAt, err := store.SaveGitHubOverview(c.Request.Context(), overview)
+		if err != nil {
+			log.Printf("save GitHub overview snapshot: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "GitHub data could not be saved"})
+			return
+		}
+		c.JSON(http.StatusOK, githubOverviewResponseFrom(overview, refreshedAt))
+	}
+}
+
+func ensureOverviewSnapshotTables(ctx context.Context, pool *pgxpool.Pool) error {
+	if _, err := pool.Exec(ctx, `
 		CREATE TABLE IF NOT EXISTS steam_overview_snapshots (
+			id SMALLINT PRIMARY KEY CHECK (id = 1),
+			payload JSONB NOT NULL,
+			refreshed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)
+	`); err != nil {
+		return err
+	}
+	_, err := pool.Exec(ctx, `
+		CREATE TABLE IF NOT EXISTS github_overview_snapshots (
 			id SMALLINT PRIMARY KEY CHECK (id = 1),
 			payload JSONB NOT NULL,
 			refreshed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -499,6 +545,82 @@ func steamGetJSON(ctx context.Context, client *http.Client, endpoint string, tar
 		return fmt.Errorf("decode Steam response: %w", err)
 	}
 	return nil
+}
+
+type githubAPIProfile struct {
+	Login       string `json:"login"`
+	PublicRepos int    `json:"public_repos"`
+	Followers   int    `json:"followers"`
+}
+
+func fetchGitHubAPIProfile(ctx context.Context, client *http.Client, username string) (githubAPIProfile, error) {
+	endpoint := fmt.Sprintf("https://api.github.com/users/%s", url.PathEscape(username))
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return githubAPIProfile{}, fmt.Errorf("create GitHub profile request: %w", err)
+	}
+	request.Header.Set("Accept", "application/vnd.github+json")
+	request.Header.Set("User-Agent", "NextAlexBlog/1.0 (+https://github.com/CbhHikari0828/NextAlexBlog)")
+	request.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+
+	response, err := client.Do(request)
+	if err != nil {
+		return githubAPIProfile{}, fmt.Errorf("request GitHub profile: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return githubAPIProfile{}, fmt.Errorf("GitHub returned %s", response.Status)
+	}
+
+	var apiProfile githubAPIProfile
+	if err := json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&apiProfile); err != nil {
+		return githubAPIProfile{}, fmt.Errorf("decode GitHub profile: %w", err)
+	}
+	return apiProfile, nil
+}
+
+func githubProfileFrom(apiProfile githubAPIProfile, username string, repositories []githubRepository) githubProfile {
+	stars, forks := 0, 0
+	for _, repository := range repositories {
+		stars += repository.Stars
+		forks += repository.Forks
+	}
+	if apiProfile.Login == "" {
+		apiProfile.Login = username
+	}
+	return githubProfile{Username: apiProfile.Login, RepositoryCount: apiProfile.PublicRepos, Stars: stars, Forks: forks, Followers: apiProfile.Followers}
+}
+
+func fetchGitHubProfile(ctx context.Context, client *http.Client, username string) (githubProfile, error) {
+	apiProfile, err := fetchGitHubAPIProfile(ctx, client, username)
+	if err != nil {
+		return githubProfile{}, err
+	}
+	repositories, err := fetchGitHubRepositories(ctx, client, username, 100)
+	if err != nil {
+		return githubProfile{}, err
+	}
+	return githubProfileFrom(apiProfile, username, repositories.Repositories), nil
+}
+
+func fetchGitHubOverview(ctx context.Context, client *http.Client, username string, year int) (githubOverview, error) {
+	apiProfile, err := fetchGitHubAPIProfile(ctx, client, username)
+	if err != nil {
+		return githubOverview{}, err
+	}
+	repositories, err := fetchGitHubRepositories(ctx, client, username, 100)
+	if err != nil {
+		return githubOverview{}, err
+	}
+	contributions, err := fetchGitHubContributions(ctx, client, username, year)
+	if err != nil {
+		return githubOverview{}, err
+	}
+	return githubOverview{
+		Profile:       githubProfileFrom(apiProfile, username, repositories.Repositories),
+		Repositories:  repositories.Repositories,
+		Contributions: contributions,
+	}, nil
 }
 
 func fetchGitHubRepositories(ctx context.Context, client *http.Client, username string, limit int) (githubRepositories, error) {

@@ -12,8 +12,10 @@ go run ./cmd/server
 The API listens on `http://localhost:8090`.
 
 - `GET /api/health`: reports database availability.
-- `GET /api/github/contributions?year=2026`: returns the public GitHub contribution calendar for the configured account. Responses are cached in memory for 15 minutes.
-- `GET /api/github/repositories?limit=3`: returns recently updated public repositories for the configured account. Responses are cached in memory for 15 minutes.
+- `GET /api/github/contributions?year=2026`: returns the contribution calendar from the PostgreSQL GitHub snapshot. It never requests GitHub.
+- `GET /api/github/repositories?limit=3`: returns repositories from the PostgreSQL GitHub snapshot. It never requests GitHub.
+- `GET /api/github/profile`: returns profile statistics from the PostgreSQL GitHub snapshot. It never requests GitHub.
+- `POST /api/admin/github/refresh`: requests the configured GitHub account once and replaces the PostgreSQL snapshot with the profile, repositories, and contribution calendar.
 - `GET /api/steam/overview`: returns the Steam snapshot stored in PostgreSQL. This endpoint never requests the Steam Web API.
 - `POST /api/admin/steam/refresh`: requests Steam once and replaces the stored snapshot. Use this from the admin Steam sync screen.
 

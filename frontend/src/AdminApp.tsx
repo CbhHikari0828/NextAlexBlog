@@ -65,9 +65,12 @@ type GitHubRepository = {
   updatedAt: string;
 };
 
-type GitHubRepositories = {
-  username: string;
+type GitHubOverview = {
+  profile: {
+    username: string;
+  };
   repositories: GitHubRepository[];
+  refreshedAt: string;
 };
 
 type SteamOverview = {
@@ -271,26 +274,26 @@ function EditorFooter({ saveState, saveDraft }: { saveState: string; saveDraft: 
 }
 
 function ProjectSync({ back }: { back: () => void }) {
-  const [data, setData] = useState<GitHubRepositories | null>(null);
+  const [data, setData] = useState<GitHubOverview | null>(null);
   const [syncState, setSyncState] = useState<"idle" | "syncing" | "failed">("idle");
   const [syncedAt, setSyncedAt] = useState("");
 
   async function syncProjects() {
     setSyncState("syncing");
     try {
-      const response = await fetch("/api/github/repositories?limit=6&refresh=1", { cache: "no-store" });
-      if (!response.ok) throw new Error("GitHub repository request failed");
-      const nextData = await response.json() as GitHubRepositories;
-      if (!nextData.username || !Array.isArray(nextData.repositories)) throw new Error("Invalid GitHub repository response");
+      const response = await fetch("/api/admin/github/refresh", { method: "POST", cache: "no-store" });
+      if (!response.ok) throw new Error("GitHub refresh request failed");
+      const nextData = await response.json() as GitHubOverview;
+      if (!nextData.profile?.username || !Array.isArray(nextData.repositories) || !nextData.refreshedAt) throw new Error("Invalid GitHub overview response");
       setData(nextData);
-      setSyncedAt(new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }).format(new Date()));
+      setSyncedAt(new Intl.DateTimeFormat("zh-CN", { dateStyle: "medium", timeStyle: "medium", hour12: false }).format(new Date(nextData.refreshedAt)));
       setSyncState("idle");
     } catch {
       setSyncState("failed");
     }
   }
 
-  return <section className="admin-manager-screen"><WorkspaceHeader title="项目同步" back={back} /><div className="admin-project-sync"><header><button className="admin-primary-button" type="button" onClick={syncProjects} disabled={syncState === "syncing"}><RefreshCw className={syncState === "syncing" ? "is-spinning" : ""} size={16} aria-hidden="true" />{syncState === "syncing" ? "同步中" : "同步项目"}</button>{syncedAt && <time>{syncedAt}</time>}</header>{syncState === "failed" && <p className="admin-sync-error" role="status">同步失败</p>}{data && <div className="admin-project-list">{data.repositories.map((repository) => <a href={repository.htmlUrl} target="_blank" rel="noreferrer" key={repository.htmlUrl}><GitBranch size={18} aria-hidden="true" /><div><strong>{repository.name}</strong><p>{repository.description || "暂无项目说明"}</p></div><span>{repository.language || "Repository"}</span></a>)}</div>}</div></section>;
+  return <section className="admin-manager-screen"><WorkspaceHeader title="项目同步" back={back} /><div className="admin-project-sync"><header><button className="admin-primary-button" type="button" onClick={syncProjects} disabled={syncState === "syncing"}><RefreshCw className={syncState === "syncing" ? "is-spinning" : ""} size={16} aria-hidden="true" />{syncState === "syncing" ? "同步中" : "同步项目"}</button>{syncedAt && <time>{syncedAt}</time>}</header>{syncState === "failed" && <p className="admin-sync-error" role="status">同步失败</p>}{data && <div className="admin-project-list">{data.repositories.slice(0, 6).map((repository) => <a href={repository.htmlUrl} target="_blank" rel="noreferrer" key={repository.htmlUrl}><GitBranch size={18} aria-hidden="true" /><div><strong>{repository.name}</strong><p>{repository.description || "暂无项目说明"}</p></div><span>{repository.language || "Repository"}</span></a>)}</div>}</div></section>;
 }
 
 function SteamSync({ back }: { back: () => void }) {

@@ -55,11 +55,10 @@ test.describe("页面切换和弹窗交互", () => {
 
     await page.goto("/admin");
     let syncRequestCount = 0;
-    await page.route("**/api/github/repositories**", async (route) => {
-      const requestURL = new URL(route.request().url());
-      if (requestURL.searchParams.get("limit") !== "6" || requestURL.searchParams.get("refresh") !== "1") return route.fallback();
+    await page.route("**/api/admin/github/refresh", async (route) => {
+      expect(route.request().method()).toBe("POST");
       syncRequestCount += 1;
-      await route.fulfill({ contentType: "application/json", body: JSON.stringify({ username: "CbhHikari0828", repositories: [{ name: "NextAlexBlog", description: "个人技术与创作平台", htmlUrl: "https://github.com/CbhHikari0828/NextAlexBlog", language: "TypeScript", updatedAt: "2026-08-17T00:00:00Z" }] }) });
+      await route.fulfill({ contentType: "application/json", body: JSON.stringify({ profile: { username: "CbhHikari0828", repositoryCount: 1, stars: 0, forks: 0, followers: 0 }, repositories: [{ name: "NextAlexBlog", description: "个人技术与创作平台", htmlUrl: "https://github.com/CbhHikari0828/NextAlexBlog", language: "TypeScript", updatedAt: "2026-08-17T00:00:00Z" }], contributions: { username: "CbhHikari0828", year: 2026, total: 0, days: [] }, refreshedAt: "2026-08-17T12:00:00Z" }) });
     });
     await page.locator(".admin-nav").getByRole("button", { name: "项目同步" }).click();
     await page.getByRole("button", { name: "同步项目" }).click();
@@ -130,6 +129,20 @@ test.describe("页面切换和弹窗交互", () => {
     await expect(libraryGame).toHaveAttribute("href", /store\.steampowered\.com\/app\/10/);
     await expect(libraryGame).toHaveAttribute("style", /steam\/apps\/10\/header\.jpg/);
     await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  });
+
+  test("创作中心展示 GitHub 快照统计", async ({ page }) => {
+    await page.route("**/api/github/profile", async (route) => {
+      await route.fulfill({ contentType: "application/json", body: JSON.stringify({ username: "CbhHikari0828", repositoryCount: 12, stars: 70, forks: 18, followers: 32 }) });
+    });
+    await page.goto("/");
+    await page.locator(".main-nav").getByRole("tab", { name: "创作中心", exact: true }).click();
+
+    const stats = page.locator(".studio-stats");
+    await expect(stats).toContainText("12");
+    await expect(stats).toContainText("70");
+    await expect(stats).toContainText("18");
+    await expect(stats).toContainText("32");
   });
 
   test("快速连续导航最终停留在最后选择的页面", async ({ page }) => {

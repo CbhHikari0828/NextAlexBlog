@@ -5,6 +5,34 @@ button, input, textarea { font: inherit; }
 button { cursor: pointer; }
 button, a { -webkit-tap-highlight-color: transparent; }
 .developer-tools-notice { position: fixed; z-index: 30; top: 0; right: 0; left: 0; padding: 9px 24px; color: #3f3513; background: #f3cd57; box-shadow: 0 2px 9px rgba(67, 55, 17, .18); font-size: .78rem; font-weight: 700; letter-spacing: 0; line-height: 1.35; text-align: center; }
+.site-loading-screen { position: fixed; z-index: 100; inset: 0; overflow: hidden; background: #ffffff; }
+.site-loader { position: absolute; top: 50%; left: 50%; margin-left: -50px; animation: site-speeder .4s linear infinite; }
+.site-loader > span { position: absolute; top: -19px; left: 60px; width: 35px; height: 5px; border-radius: 2px 10px 1px 0; background: #000000; }
+.site-loader-base span { position: absolute; width: 0; height: 0; border-top: 6px solid transparent; border-right: 100px solid #000000; border-bottom: 6px solid transparent; }
+.site-loader-base span::before { position: absolute; top: -16px; right: -110px; width: 22px; height: 22px; border-radius: 50%; background: #000000; content: ""; }
+.site-loader-base span::after { position: absolute; top: -16px; right: -98px; width: 0; height: 0; border-top: 0 solid transparent; border-right: 55px solid #000000; border-bottom: 16px solid transparent; content: ""; }
+.site-loader-face { position: absolute; top: -15px; right: -125px; width: 20px; height: 12px; border-radius: 20px 20px 0 0; background: #000000; transform: rotate(-40deg); }
+.site-loader-face::after { position: absolute; top: 7px; right: 4px; width: 12px; height: 12px; border-radius: 0 0 0 2px; background: #000000; content: ""; transform: rotate(40deg); transform-origin: 50% 50%; }
+.site-loader > span > span:nth-child(1), .site-loader > span > span:nth-child(2), .site-loader > span > span:nth-child(3), .site-loader > span > span:nth-child(4) { position: absolute; width: 30px; height: 1px; background: #000000; animation: site-fazer1 .2s linear infinite; }
+.site-loader > span > span:nth-child(2) { top: 3px; animation-name: site-fazer2; animation-duration: .4s; }
+.site-loader > span > span:nth-child(3) { top: 1px; animation-name: site-fazer3; animation-duration: .4s; animation-delay: -1s; }
+.site-loader > span > span:nth-child(4) { top: 4px; animation-name: site-fazer4; animation-duration: 1s; animation-delay: -1s; }
+.site-longfazers { position: absolute; width: 100%; height: 100%; }
+.site-longfazers span { position: absolute; width: 20%; height: 2px; background: #000000; }
+.site-longfazers span:nth-child(1) { top: 20%; animation: site-lf .6s linear infinite; animation-delay: -5s; }
+.site-longfazers span:nth-child(2) { top: 40%; animation: site-lf2 .8s linear infinite; animation-delay: -1s; }
+.site-longfazers span:nth-child(3) { top: 60%; animation: site-lf3 .6s linear infinite; }
+.site-longfazers span:nth-child(4) { top: 80%; animation: site-lf4 .5s linear infinite; animation-delay: -3s; }
+@keyframes site-fazer1 { 0% { left: 0; } 100% { left: -80px; opacity: 0; } }
+@keyframes site-fazer2 { 0% { left: 0; } 100% { left: -100px; opacity: 0; } }
+@keyframes site-fazer3 { 0% { left: 0; } 100% { left: -50px; opacity: 0; } }
+@keyframes site-fazer4 { 0% { left: 0; } 100% { left: -150px; opacity: 0; } }
+@keyframes site-speeder { 0% { transform: translate(2px, 1px) rotate(0deg); } 10% { transform: translate(-1px, -3px) rotate(-1deg); } 20% { transform: translate(-2px, 0) rotate(1deg); } 30% { transform: translate(1px, 2px) rotate(0deg); } 40% { transform: translate(1px, -1px) rotate(1deg); } 50% { transform: translate(-1px, 3px) rotate(-1deg); } 60% { transform: translate(-1px, 1px) rotate(0deg); } 70% { transform: translate(3px, 1px) rotate(-1deg); } 80% { transform: translate(-2px, -1px) rotate(1deg); } 90% { transform: translate(2px, 1px) rotate(0deg); } 100% { transform: translate(1px, -2px) rotate(-1deg); } }
+@keyframes site-lf { 0% { left: 200%; } 100% { left: -200%; opacity: 0; } }
+@keyframes site-lf2 { 0% { left: 200%; } 100% { left: -200%; opacity: 0; } }
+@keyframes site-lf3 { 0% { left: 200%; } 100% { left: -100%; opacity: 0; } }
+@keyframes site-lf4 { 0% { left: 200%; } 100% { left: -100%; opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .site-loader, .site-loader > span > span, .site-longfazers span { animation: none; } }
 .app-shell { width: min(100% - 64px, 1180px); min-height: 100vh; margin: 0 auto; display: flex; flex-direction: column; }
 .page-stage { min-width: 0; view-transition-name: page-content; animation: page-stage-enter 280ms var(--motion-enter) backwards; }
 .page-stage-home, .page-stage-guestbook { position: relative; isolation: isolate; overflow: clip; animation-name: page-stage-fade; }
@@ -286,7 +314,7 @@ html[data-page-transition="running"] .page-stage, html.view-transitions-enabled 
 .steam-page { min-height: 680px; padding: 68px 0 96px; }
 .steam-state { display: grid; place-items: center; color: #6a7781; font-size: .9rem; }
 .steam-state p { margin: 0; }
-.steam-profile { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 24px; padding-bottom: 38px; border-bottom: 1px solid #dce3e9; }
+.steam-profile { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 24px; padding-bottom: 24px; }
 .steam-profile h1 { margin: 0 0 9px; color: #17202a; font-size: clamp(1.7rem, 3vw, 2.45rem); font-weight: 850; letter-spacing: 0; line-height: 1.1; }
 .steam-profile div > a { color: #61717d; font-size: .82rem; font-weight: 750; text-decoration: none; }
 .steam-profile div > a:hover { color: #1f6f5b; }
@@ -302,7 +330,9 @@ html[data-page-transition="running"] .page-stage, html.view-transitions-enabled 
 .steam-stat-time { overflow: hidden; font-size: 1.7em; font-weight: 500; font-variant-numeric: tabular-nums; text-overflow: ellipsis; white-space: nowrap; }
 .steam-stat-desc p { margin: 0; font-size: .8em; line-height: 1; }
 .steam-stat-card:hover .steam-stat-image { transform: translateY(1em); }
-.steam-section { padding-top: 48px; }
+.steam-games-zone { margin-top: 0; padding-top: 28px; border-top: 1px solid #dce3e9; }
+.steam-section { padding-top: 0; }
+.steam-section + .steam-section { padding-top: 42px; }
 .steam-section h2 { margin: 0 0 20px; color: #17202a; font-size: 1.05rem; font-weight: 850; }
 .steam-game-strip { display: flex; width: min(100%, 1260px); min-height: 108px; padding: 22px 0 24px; transform: perspective(1000px); transform-style: preserve-3d; }
 .steam-game-item { position: relative; width: 126px; height: 60px; flex-shrink: 0; outline: none; cursor: pointer; text-decoration: none; transition: 500ms cubic-bezier(.175, .885, .32, 1.1); }

@@ -51,3 +51,9 @@ CREATE TABLE IF NOT EXISTS steam_overview_snapshots (
     payload JSONB NOT NULL,
     refreshed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+CREATE TABLE IF NOT EXISTS github_overview_snapshots (
+    id SMALLINT PRIMARY KEY CHECK (id = 1),
+    payload JSONB NOT NULL,
+    refreshed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);

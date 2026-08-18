@@ -51,6 +51,14 @@ type GitHubRepositories = {
   repositories: GitHubRepository[];
 };
 
+type GitHubProfile = {
+  username: string;
+  repositoryCount: number;
+  stars: number;
+  forks: number;
+  followers: number;
+};
+
 type SteamProfile = {
   steamId: string;
   name: string;
@@ -648,7 +656,38 @@ function ArticleWeatherCard() {
 }
 
 function App() {
-  return window.location.pathname.startsWith("/admin") ? <AdminApp /> : <PublicApp />;
+  const [showLoader, setShowLoader] = useState(true);
+
+  useEffect(() => {
+    const startedAt = performance.now();
+    let completed = false;
+    let releaseTimer: number | undefined;
+
+    const completeLoading = () => {
+      if (completed) return;
+      completed = true;
+      releaseTimer = window.setTimeout(() => setShowLoader(false), Math.max(0, 650 - (performance.now() - startedAt)));
+    };
+
+    const fallbackTimer = window.setTimeout(completeLoading, 4000);
+    if (document.readyState === "complete") completeLoading();
+    else window.addEventListener("load", completeLoading, { once: true });
+
+    return () => {
+      window.removeEventListener("load", completeLoading);
+      window.clearTimeout(fallbackTimer);
+      window.clearTimeout(releaseTimer);
+    };
+  }, []);
+
+  return <>{window.location.pathname.startsWith("/admin") ? <AdminApp /> : <PublicApp />}{showLoader && <SiteLoader />}</>;
+}
+
+function SiteLoader() {
+  return <div className="site-loading-screen" aria-label="加载中" role="status">
+    <div className="site-loader"><span><span /><span /><span /><span /></span><div className="site-loader-base"><span /><div className="site-loader-face" /></div></div>
+    <div className="site-longfazers" aria-hidden="true"><span /><span /><span /><span /></div>
+  </div>;
 }
 
 function PublicApp() {
@@ -659,6 +698,8 @@ function PublicApp() {
   const [contributionState, setContributionState] = useState<ContributionState>("loading");
   const [githubRepositories, setGithubRepositories] = useState<GitHubRepositories | null>(null);
   const [repositoryState, setRepositoryState] = useState<RepositoryState>("loading");
+  const [githubProfile, setGithubProfile] = useState<GitHubProfile | null>(null);
+  const [profileState, setProfileState] = useState<RepositoryState>("loading");
   const [steamOverview, setSteamOverview] = useState<SteamOverview | null>(null);
   const [steamState, setSteamState] = useState<SteamState>("idle");
   const [developerToolsOpen, setDeveloperToolsOpen] = useState(false);
@@ -738,6 +779,27 @@ function PublicApp() {
       .catch((error: unknown) => {
         if (error instanceof DOMException && error.name === "AbortError") return;
         setRepositoryState("unavailable");
+      });
+
+    return () => controller.abort();
+  }, []);
+
+  useEffect(() => {
+    const controller = new AbortController();
+
+    fetch("/api/github/profile", { signal: controller.signal })
+      .then((response) => {
+        if (!response.ok) throw new Error("GitHub profile request failed");
+        return response.json() as Promise<GitHubProfile>;
+      })
+      .then((data) => {
+        if (!data.username || !Number.isFinite(data.repositoryCount) || !Number.isFinite(data.stars) || !Number.isFinite(data.forks) || !Number.isFinite(data.followers)) throw new Error("Invalid GitHub profile response");
+        setGithubProfile(data);
+        setProfileState("ready");
+      })
+      .catch((error: unknown) => {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        setProfileState("unavailable");
       });
 
     return () => controller.abort();
@@ -907,7 +969,7 @@ function PublicApp() {
         )}
         {view === "notes" && <Notes setSelectedNote={openNote} />}
         {view === "gallery" && <Gallery creations={[...publishedCreations, ...creations]} setSelectedCreation={openCreation} />}
-        {view === "studio" && <Studio contributions={githubContributions} contributionState={contributionState} repositories={githubRepositories} repositoryState={repositoryState} />}
+        {view === "studio" && <Studio contributions={githubContributions} contributionState={contributionState} repositories={githubRepositories} repositoryState={repositoryState} profile={githubProfile} profileState={profileState} />}
         {view === "entertainment" && <SteamEntertainment overview={steamOverview} state={steamState} />}
         {view === "guestbook" && <Guestbook visitor={visitor} message={message} setVisitor={setVisitor} setMessage={setMessage} comments={comments} submitMessage={submitMessage} />}
       </div>
@@ -1089,7 +1151,7 @@ function RepositoryProjectCard({ project, username, className = "" }: { project:
   </div>;
 }
 
-function Studio({ contributions, contributionState, repositories, repositoryState }: { contributions: GitHubContributions | null; contributionState: ContributionState; repositories: GitHubRepositories | null; repositoryState: RepositoryState }) {
+function Studio({ contributions, contributionState, repositories, repositoryState, profile, profileState }: { contributions: GitHubContributions | null; contributionState: ContributionState; repositories: GitHubRepositories | null; repositoryState: RepositoryState; profile: GitHubProfile | null; profileState: RepositoryState }) {
   const contributionYear = contributions?.year ?? new Date().getFullYear();
   const contributionWeeks = buildContributionWeeks(contributionYear, contributions?.days ?? []);
   const contributionMonthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -1101,6 +1163,7 @@ function Studio({ contributions, contributionState, repositories, repositoryStat
   });
   const contributionSummary = contributionState === "ready" ? `${contributionYear} 年 ${contributions?.total ?? 0} 次贡献` : contributionState === "loading" ? "正在同步贡献记录" : "贡献记录暂不可用";
   const projects = repositories?.repositories ?? [];
+  const profileStat = (value: number | undefined) => profileState === "ready" && profile && value !== undefined ? value.toLocaleString("zh-CN") : "—";
 
   return <section className="studio-layout">
     <div className="studio-overview">
@@ -1109,10 +1172,10 @@ function Studio({ contributions, contributionState, repositories, repositoryStat
         <h1>WORKS</h1>
         <span className="studio-title-rule" aria-hidden="true" />
         <div className="studio-stats">
-          <div><Code2 size={25} strokeWidth={1.8} /><strong>12</strong><span>Repositories</span></div>
-          <div><Star size={25} strokeWidth={1.8} /><strong>68</strong><span>Stars</span></div>
-          <div><GitFork size={25} strokeWidth={1.8} /><strong>15</strong><span>Forks</span></div>
-          <div><Users size={25} strokeWidth={1.8} /><strong>32</strong><span>Followers</span></div>
+          <div><Code2 size={25} strokeWidth={1.8} /><strong>{profileStat(profile?.repositoryCount)}</strong><span>Repositories</span></div>
+          <div><Star size={25} strokeWidth={1.8} /><strong>{profileStat(profile?.stars)}</strong><span>Stars</span></div>
+          <div><GitFork size={25} strokeWidth={1.8} /><strong>{profileStat(profile?.forks)}</strong><span>Forks</span></div>
+          <div><Users size={25} strokeWidth={1.8} /><strong>{profileStat(profile?.followers)}</strong><span>Followers</span></div>
         </div>
         <div className="studio-actions"><a className="studio-action-primary" href="https://github.com/CbhHikari0828/NextAlexBlog" target="_blank" rel="noreferrer">View on GitHub <ArrowUpRight size={17} /></a><a className="studio-action-secondary" href="https://github.com/CbhHikari0828?tab=repositories" target="_blank" rel="noreferrer">All Projects <ArrowUpRight size={17} /></a></div>
       </div>
@@ -1139,8 +1202,10 @@ function SteamEntertainment({ overview, state }: { overview: SteamOverview | nul
       <div><h1>{overview.profile.name}</h1><a href={overview.profile.profileUrl} target="_blank" rel="noreferrer">Steam 个人主页</a></div>
       <div className="steam-profile-cards"><SteamProfileStatCard title="游戏库" value={`${overview.gameCount}`} detail="拥有游戏" /><SteamProfileStatCard title="游玩时长" value={formatSteamPlaytime(overview.totalPlaytime)} detail="累计时长" /></div>
     </header>
-    {recentGames.length > 0 && <section className="steam-section"><h2>最近游玩</h2><SteamGameCoverStrip games={recentGames} recent /></section>}
-    <section className="steam-section"><h2>游戏库</h2><SteamGameAccordion games={libraryGames} /></section>
+    <div className="steam-games-zone">
+      {recentGames.length > 0 && <section className="steam-section"><h2>最近游玩</h2><SteamGameCoverStrip games={recentGames} recent /></section>}
+      <section className="steam-section"><h2>游戏库</h2><SteamGameAccordion games={libraryGames} /></section>
+    </div>
   </section>;
 }
 
