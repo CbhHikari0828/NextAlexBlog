@@ -1,6 +1,8 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import { flushSync } from "react-dom";
-import { ArrowUpRight, ChevronDown, ChevronLeft, ChevronRight, Code2, Eye, GitBranch, GitFork, Mail, Rss, Star, Users } from "lucide-react";
+import { ArrowUpRight, ChevronDown, ChevronLeft, ChevronRight, Code2, Eye, GitBranch, GitFork, Mail, Rss, Send, Star, Users } from "lucide-react";
+import { motion, useMotionValue, useSpring, useTransform } from "motion/react";
 import ReactMarkdown from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
@@ -141,9 +143,19 @@ type Creation = {
 
 type Note = {
   date: string;
+  year?: string;
   title: string;
   body: string;
   content: string[];
+  markdown?: string;
+};
+
+type NoteRecord = {
+  id: number;
+  title: string;
+  date: string;
+  content: string;
+  createdAt: string;
 };
 
 type GuestbookComment = {
@@ -153,32 +165,38 @@ type GuestbookComment = {
   color: string;
 };
 
-type PublishedGalleryRecord = {
-  title?: unknown;
-  image?: unknown;
-  model?: unknown;
-  prompt?: unknown;
-};
-
 const noteColors = ["ice", "mint", "lavender", "rose"] as const;
 const steamGameColors = ["#e11d48", "#f472b6", "#fb923c", "#facc15", "#84cc16", "#10b981", "#0ea5e9", "#3b82f6", "#8b5cf6", "#a78bfa"] as const;
 type NoteColor = typeof noteColors[number];
 const articlesPerPage = 5;
 
-function readPublishedGallery(): Creation[] {
-  try {
-    const records = JSON.parse(localStorage.getItem("nextalex-admin-published-gallery") || "[]") as PublishedGalleryRecord[];
-    if (!Array.isArray(records)) return [];
+function noteRecordToNote(record: NoteRecord): Note | null {
+  const title = record.title.trim();
+  const markdown = record.content.trim();
+  const dateParts = record.date.split("-");
+  if (!title || !markdown || dateParts.length !== 3 || !dateParts.every((part) => /^\d+$/.test(part))) return null;
 
-    return records.flatMap((record) => {
-      if (typeof record.title !== "string" || typeof record.image !== "string" || typeof record.model !== "string" || typeof record.prompt !== "string") return [];
-      if (!record.title.trim() || !record.image.trim() || !record.model.trim() || !record.prompt.trim()) return [];
+  const plainParagraphs = markdown
+    .split(/\n\s*\n/)
+    .map((paragraph) => paragraph
+      .replace(/^#{1,6}\s+/gm, "")
+      .replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1")
+      .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+      .replace(/[`*_~]/g, "")
+      .replace(/^\s*[-+>]\s*/gm, "")
+      .replace(/\s+/g, " ")
+      .trim())
+    .filter(Boolean);
+  const body = plainParagraphs.join(" ").slice(0, 96) || title;
 
-      return [{ title: record.title, type: "AI 图像", state: "已发布", description: record.prompt, model: record.model, prompt: record.prompt, image: record.image, accent: "#ffffff" }];
-    });
-  } catch {
-    return [];
-  }
+  return {
+    date: `${dateParts[1].padStart(2, "0")}.${dateParts[2].padStart(2, "0")}`,
+    year: dateParts[0],
+    title,
+    body,
+    content: plainParagraphs,
+    markdown,
+  };
 }
 
 function buildContributionWeeks(year: number, days: GitHubContributionDay[]): ContributionCell[][] {
@@ -597,39 +615,6 @@ const articles: Article[] = [
   { title: "异步链路中的异常传播与降级", category: "Java 并发编程", series: "异步工具箱", date: "2026.05.21", readTime: "14 min", views: 574, excerpt: "统一处理异常、超时和兜底结果，避免异步流程在边界处失控。", content: articleBodies.completableFuture },
 ];
 
-const creations: Creation[] = [
-  {
-    title: "Neon Archive",
-    type: "AI 视觉实验",
-    state: "展出中",
-    description: "以城市夜景为主题的 AI 生成图像系列。",
-    model: "Midjourney v6.1",
-    prompt: "rain-soaked cyberpunk street at night, neon magenta and cyan reflections, empty urban boulevard, cinematic wide angle, atmospheric haze, high contrast, detailed architecture, 35mm film still --ar 16:9 --stylize 250",
-    image: "https://images.unsplash.com/photo-1519608487953-e999c86e7455?auto=format&fit=crop&w=1200&q=85",
-    accent: "#ffffff",
-  },
-  {
-    title: "Prompt Garden",
-    type: "AI 编程作品",
-    state: "迭代中",
-    description: "用于管理提示词、版本记录和项目素材的交互式工具。",
-    model: "FLUX.1 Pro",
-    prompt: "ancient stone castle emerging from morning fog, quiet mountain valley, warm sunrise through the mist, weathered walls, cinematic landscape photography, soft natural light, restrained colors, highly detailed --ar 16:9",
-    image: "https://images.unsplash.com/photo-1518709268805-4e9042af9f23?auto=format&fit=crop&w=1200&q=85",
-    accent: "#7b9d82",
-  },
-  {
-    title: "Quiet Machines",
-    type: "交互原型",
-    state: "已归档",
-    description: "一场关于自动化和人类注意力的黑白界面练习。",
-    model: "SDXL 1.0",
-    prompt: "friendly white service robot in a contemporary research lab, close-up portrait, soft daylight, clean industrial display, precise material detail, documentary photography, neutral palette, shallow depth of field --ar 16:9",
-    image: "https://images.unsplash.com/photo-1535378917042-10a22c95931a?auto=format&fit=crop&w=1200&q=85",
-    accent: "#8a9aa5",
-  },
-];
-
 const notes: Note[] = [
   { date: "08.11", title: "并发学习方法", body: "先识别共享状态和状态转换，再选择并发控制方案。", content: ["并发问题通常不是从锁开始，而是从共享状态开始。先明确哪些数据会被多个线程读取或修改，再标出状态变化发生的位置。", "随后根据一致性要求选择控制方式：只需要可见性时使用 volatile；需要复合操作原子性时使用同步机制或原子类；读多写少的场景则优先评估不可变对象和并发集合。", "每次引入同步都应说明它保护的状态以及释放锁后的不变量，这比单纯记忆 API 更可靠。"] },
   { date: "08.06", title: "Prompt Garden 交互调整", body: "完成项目工作区的配色和信息层级优化。", content: ["本次调整重点在于压缩无效的视觉噪声，让工作区在首次进入时先呈现任务，而不是装饰。", "配色减少为中性色和单一强调色，标题、说明和状态的层级通过字号与间距建立。交互状态只在悬停和选中时出现，避免持续争夺注意力。", "后续会继续整理移动端的列表密度和面板折叠行为。"] },
@@ -723,7 +708,8 @@ function PublicApp() {
   const [copyNoticeVisible, setCopyNoticeVisible] = useState(false);
   const [activeCategory, setActiveCategory] = useState("全部文章");
   const [articlePage, setArticlePage] = useState(1);
-  const [publishedCreations, setPublishedCreations] = useState<Creation[]>(readPublishedGallery);
+  const [publishedCreations, setPublishedCreations] = useState<Creation[]>([]);
+  const [publishedNotes, setPublishedNotes] = useState<Note[]>(notes);
   const [selectedArticle, setSelectedArticle] = useState<Article | null>(null);
   const [selectedCreation, setSelectedCreation] = useState<Creation | null>(null);
   const [selectedNote, setSelectedNote] = useState<Note | null>(null);
@@ -754,9 +740,39 @@ function PublicApp() {
   }, []);
 
   useEffect(() => {
-    const refreshPublishedGallery = () => setPublishedCreations(readPublishedGallery());
-    window.addEventListener("storage", refreshPublishedGallery);
-    return () => window.removeEventListener("storage", refreshPublishedGallery);
+    const controller = new AbortController();
+    fetch("/api/gallery", { signal: controller.signal })
+      .then((response) => {
+        if (!response.ok) throw new Error("Gallery request failed");
+        return response.json() as Promise<Array<{ title: string; model: string; prompt: string; image: string }>>;
+      })
+      .then((records) => {
+        if (!Array.isArray(records)) throw new Error("Invalid gallery response");
+        setPublishedCreations(records.filter((record) => record.title && record.model && record.prompt && record.image).map((record) => ({ title: record.title, type: "AI 图像", state: "已发布", description: record.prompt, model: record.model, prompt: record.prompt, image: record.image, accent: "#ffffff" })));
+      })
+      .catch((error: unknown) => {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        setPublishedCreations([]);
+      });
+    return () => controller.abort();
+  }, []);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    fetch("/api/notes", { signal: controller.signal })
+      .then((response) => {
+        if (!response.ok) throw new Error("Notes request failed");
+        return response.json() as Promise<NoteRecord[]>;
+      })
+      .then((records) => {
+        if (!Array.isArray(records)) throw new Error("Invalid notes response");
+        const fetchedNotes = records.map(noteRecordToNote).filter((note): note is Note => note !== null);
+        setPublishedNotes(fetchedNotes.length > 0 ? fetchedNotes : notes);
+      })
+      .catch((error: unknown) => {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+      });
+    return () => controller.abort();
   }, []);
 
   useEffect(() => {
@@ -1001,8 +1017,8 @@ function PublicApp() {
         {view === "articles" && (
           <Articles activeCategory={activeCategory} setActiveCategory={selectArticleCategory} paginatedArticles={paginatedArticles} articlePage={visibleArticlePage} articlePageCount={articlePageCount} setArticlePage={setArticlePage} setSelectedArticle={openArticle} />
         )}
-        {view === "notes" && <Notes setSelectedNote={openNote} />}
-        {view === "gallery" && <Gallery creations={[...publishedCreations, ...creations]} setSelectedCreation={openCreation} />}
+        {view === "notes" && <Notes notes={publishedNotes} setSelectedNote={openNote} />}
+        {view === "gallery" && <Gallery creations={publishedCreations} setSelectedCreation={openCreation} />}
         {view === "studio" && <Studio contributions={githubContributions} contributionState={contributionState} repositories={githubRepositories} repositoryState={repositoryState} profile={githubProfile} profileState={profileState} />}
         {view === "entertainment" && <SteamEntertainment overview={steamOverview} state={steamState} musicPreferences={musicPreferences} />}
         {view === "guestbook" && <Guestbook visitor={visitor} message={message} setVisitor={setVisitor} setMessage={setMessage} comments={comments} submitMessage={submitMessage} />}
@@ -1061,9 +1077,24 @@ function Home({ navigate, setSelectedArticle, repositories, repositoryState }: {
       <section className="home-lower home-content">
         <div><div className="section-heading compact"><div><h2>创作项目</h2></div><button className="text-action" onClick={() => navigate("studio")}>进入创作中心 <span>↗</span></button></div><div className="home-project-grid">{repositoryState === "ready" && projects.length > 0 ? projects.slice(0, 2).map((project) => <RepositoryProjectCard className="home-project-card" key={project.htmlUrl} project={project} username={repositories?.username || "GitHub"} />) : <p className="home-project-empty">{repositoryState === "loading" ? "正在同步 GitHub 项目" : "GitHub 项目暂不可用"}</p>}</div></div>
         <HomeQuickFolder navigate={navigate} />
+        <HomeSocialTooltip />
       </section>
       </div>
     </>
+  );
+}
+
+function HomeSocialTooltip() {
+  const [isOpen, setIsOpen] = useState(false);
+
+  return (
+    <div className={`home-social-tooltip${isOpen ? " is-open" : ""}`} aria-label="社交链接">
+      <button className="home-social-tooltip-trigger" type="button" onClick={() => setIsOpen((open) => !open)} aria-label={isOpen ? "收起社交链接" : "展开社交链接"} aria-expanded={isOpen}><Send size={22} fill="currentColor" strokeWidth={1.8} /></button>
+      <a className="home-social-tooltip-item home-social-tooltip-github" href="https://github.com/CbhHikari0828" target="_blank" rel="noreferrer" aria-label="GitHub" title="GitHub"><svg viewBox="0 0 16 16" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M8 0a8 8 0 0 0-2.53 15.59c.4.07.55-.17.55-.38v-1.49c-2.01.44-2.43-.85-2.43-.85-.33-.84-.81-1.06-.81-1.06-.66-.45.05-.44.05-.44.73.05 1.12.75 1.12.75.65 1.11 1.7.79 2.12.6.07-.47.25-.79.46-.97-1.61-.18-3.31-.81-3.31-3.59 0-.79.28-1.44.75-1.95-.08-.18-.33-.92.07-1.92 0 0 .61-.2 2 .75A6.9 6.9 0 0 1 8 3.88c.61 0 1.22.08 1.79.24 1.39-.95 2-.75 2-.75.4 1 .15 1.74.07 1.92.47.51.75 1.16.75 1.95 0 2.79-1.7 3.4-3.32 3.58.26.23.49.67.49 1.35v2.01c0 .21.14.46.55.38A8 8 0 0 0 8 0Z" /></svg></a>
+      <a className="home-social-tooltip-item home-social-tooltip-email" href="mailto:alexlee0828cbh@gmail.com" aria-label="Email" title="Email"><Mail size={20} /></a>
+      <a className="home-social-tooltip-item home-social-tooltip-linkedin" href="https://www.linkedin.com/in/%E5%AE%9D%E5%90%88-%E9%99%88-a69233415/" target="_blank" rel="noreferrer" aria-label="LinkedIn" title="LinkedIn"><svg viewBox="0 0 16 16" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M0 1.15C0 .51.53 0 1.18 0h13.64C15.47 0 16 .51 16 1.15v13.7c0 .64-.53 1.15-1.18 1.15H1.18C.53 16 0 15.49 0 14.85V1.15Zm4.94 12.54V6.17H2.44v7.52h2.5ZM3.69 5.14c.87 0 1.41-.58 1.41-1.3-.02-.73-.54-1.29-1.4-1.29-.86 0-1.42.56-1.42 1.29 0 .72.54 1.3 1.39 1.3h.02Zm2.64 8.55h2.5V9.49c0-.22.02-.44.08-.6.18-.44.6-.9 1.3-.9.91 0 1.28.69 1.28 1.7v4h2.5V9.4c0-2.3-1.23-3.37-2.87-3.37-1.32 0-1.9.73-2.23 1.24h.02V6.17h-2.5c.03.71 0 7.52 0 7.52Z" /></svg></a>
+      <span className="home-social-tooltip-hitbox" aria-hidden="true" />
+    </div>
   );
 }
 
@@ -1100,17 +1131,12 @@ function Articles({ activeCategory, setActiveCategory, paginatedArticles, articl
   return <section className="content-band article-index"><div className="article-feed"><h1>最新发布</h1><div className="article-list">{paginatedArticles.map((article) => <button className="article-feed-item" key={article.title} onClick={() => setSelectedArticle(article)}><h2>{article.title}</h2><p>{article.excerpt}</p><span className="article-read-action">阅读全文 <i aria-hidden="true">→</i></span></button>)}</div><nav className="article-pagination" aria-label="文章分页"><button className="article-pagination-arrow" type="button" onClick={() => setArticlePage(articlePage - 1)} disabled={articlePage === 1} aria-label="上一页" title="上一页"><ChevronLeft aria-hidden="true" size={17} /></button>{Array.from({ length: articlePageCount }, (_, index) => index + 1).map((page) => <button className={`article-pagination-page${page === articlePage ? " active" : ""}`} type="button" key={page} aria-current={page === articlePage ? "page" : undefined} onClick={() => setArticlePage(page)}>{page}</button>)}<button className="article-pagination-arrow" type="button" onClick={() => setArticlePage(articlePage + 1)} disabled={articlePage === articlePageCount} aria-label="下一页" title="下一页"><ChevronRight aria-hidden="true" size={17} /></button></nav></div><aside className="article-aside"><section className="article-category-panel"><h2>文章分类</h2><div className="article-category-tags" role="tablist" aria-label="文章分类">{categories.map((category) => <button key={category} role="tab" aria-selected={activeCategory === category} className={activeCategory === category ? "filter-active" : ""} onClick={() => setActiveCategory(category)}>{category}</button>)}</div></section><section className="popular-articles"><h2>热门文章</h2><div>{articles.slice(0, 5).map((article) => <button key={article.title} onClick={() => setSelectedArticle(article)}><span aria-hidden="true">→</span>{article.title}</button>)}</div></section><ArticleWeatherCard /></aside></section>;
 }
 
-function Notes({ setSelectedNote }: { setSelectedNote: (note: Note) => void }) {
+function Notes({ notes, setSelectedNote }: { notes: Note[]; setSelectedNote: (note: Note) => void }) {
   return (
     <section className="content-band notes-layout">
       <div className="notes-list">
         <h1>最近更新</h1>
-        {notes.map((note) => (
-          <button className="note-entry" type="button" key={note.title} onClick={() => setSelectedNote(note)}>
-            <time>{note.date} / 2026</time>
-            <span><h2>{note.title}</h2><p>{note.body}</p></span>
-          </button>
-        ))}
+        <div className="notes-wobble-grid">{notes.map((note, index) => <WobbleNoteCard note={note} index={index} key={`${note.year ?? "2026"}-${note.date}-${note.title}`} open={() => setSelectedNote(note)} />)}</div>
       </div>
       <aside className="notes-about">
         <div className="card notes-about-card">
@@ -1132,27 +1158,147 @@ function Notes({ setSelectedNote }: { setSelectedNote: (note: Note) => void }) {
   );
 }
 
-function Gallery({ creations, setSelectedCreation }: { creations: Creation[]; setSelectedCreation: (creation: Creation) => void }) {
-  return <section className="gallery-showcase"><div className="gallery-head"><p>展示 AI 生成图像、视觉研究和界面设计作品，按项目归档。</p><span>{String(creations.length).padStart(2, "0")} PROJECTS</span></div><div className="gallery-grid">{creations.map((creation) => <GalleryDisclosureCard creation={creation} key={creation.title} setSelectedCreation={setSelectedCreation} />)}</div></section>;
+function WobbleNoteCard({ note, index, open }: { note: Note; index: number; open: () => void }) {
+  const cardClass = index === 0 ? "note-wobble-primary" : `note-wobble-${index + 1}`;
+
+  return <WobbleCard className={`note-wobble-card ${cardClass}`}>
+    <button aria-label={`打开笔记 ${note.title}`} className="note-entry note-wobble-button" onClick={open} type="button">
+      <span className="note-wobble-glow" aria-hidden="true" />
+      <span className="note-wobble-orbit" aria-hidden="true"><i /><i /><i /></span>
+      <time>{note.date} / {note.year ?? "2026"}</time>
+      <span className="note-wobble-copy"><strong>{note.title}</strong><span>{note.body}</span></span>
+    </button>
+  </WobbleCard>;
 }
 
-function GalleryDisclosureCard({ creation, setSelectedCreation }: { creation: Creation; setSelectedCreation: (creation: Creation) => void }) {
-  const [isOpen, setIsOpen] = useState(false);
-  const toggleOpen = () => setIsOpen((open) => !open);
+function WobbleCard({ children, className = "" }: { children: ReactNode; className?: string }) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const mouseX = useMotionValue(0);
+  const mouseY = useMotionValue(0);
+  const rotateX = useSpring(useTransform(mouseY, [-300, 300], [10, -10]), { stiffness: 100, damping: 10, mass: 0.5 });
+  const rotateY = useSpring(useTransform(mouseX, [-300, 300], [-10, 10]), { stiffness: 100, damping: 10, mass: 0.5 });
 
-  return <article className={`gallery-card${isOpen ? " is-open" : ""}`}>
-    <button className="gallery-card-image" type="button" onClick={toggleOpen} aria-label={`${isOpen ? "收起" : "展开"}${creation.title}`} aria-expanded={isOpen}>
-      <img src={creation.image} alt={creation.title} />
-    </button>
-    <div className="gallery-card-disclosure">
-      <button className="gallery-card-trigger" type="button" onClick={toggleOpen} aria-expanded={isOpen}>
-        <span><strong>{creation.title}</strong><small>模型 / {creation.model}</small></span><ChevronDown aria-hidden="true" size={18} />
-      </button>
-      <div className="gallery-card-content" aria-hidden={!isOpen}>
-        <div><div className="gallery-card-prompt"><span>提示词</span><p>{creation.prompt}</p></div><button type="button" tabIndex={isOpen ? 0 : -1} onClick={() => setSelectedCreation(creation)}>查看详情 <ArrowUpRight size={16} aria-hidden="true" /></button></div>
-      </div>
-    </div>
-  </article>;
+  function handlePointerMove(event: ReactPointerEvent<HTMLDivElement>) {
+    const bounds = containerRef.current?.getBoundingClientRect();
+    if (!bounds) return;
+    mouseX.set(event.clientX - (bounds.left + bounds.width / 2));
+    mouseY.set(event.clientY - (bounds.top + bounds.height / 2));
+  }
+
+  function resetPointer() {
+    mouseX.set(0);
+    mouseY.set(0);
+  }
+
+  return <motion.div ref={containerRef} className={className} onPointerMove={handlePointerMove} onPointerLeave={resetPointer} style={{ rotateX, rotateY, transformStyle: "preserve-3d" }}>{children}</motion.div>;
+}
+
+function Gallery({ creations, setSelectedCreation }: { creations: Creation[]; setSelectedCreation: (creation: Creation) => void }) {
+  const cards: LayoutGridCard[] = creations.map((creation, index) => ({
+    id: index + 1,
+    thumbnail: creation.image,
+    className: "gallery-card",
+    content: <GalleryLayoutContent creation={creation} setSelectedCreation={setSelectedCreation} />,
+    label: creation.title,
+  }));
+
+  return <section className="gallery-showcase"><div className="gallery-head"><p>展示 AI 生成图像、视觉研究和界面设计作品，按项目归档。</p><span>{String(creations.length).padStart(2, "0")} PROJECTS</span></div>{creations.length > 0 ? <LayoutGrid cards={cards} /> : <div className="gallery-empty">暂无作品</div>}</section>;
+}
+
+type LayoutGridCard = {
+  id: number;
+  content: ReactNode;
+  className: string;
+  thumbnail: string;
+  label: string;
+};
+
+function LayoutGrid({ cards }: { cards: LayoutGridCard[] }) {
+  const [selected, setSelected] = useState<LayoutGridCard | null>(null);
+  const [lastSelected, setLastSelected] = useState<LayoutGridCard | null>(null);
+  const [imageRatios, setImageRatios] = useState<Record<number, number>>({});
+  const [gridMetrics, setGridMetrics] = useState({ width: 0, columns: 3 });
+  const gridRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const grid = gridRef.current;
+    if (!grid) return;
+    const updateMetrics = () => {
+      const style = window.getComputedStyle(grid);
+      const columns = style.gridTemplateColumns.split(" ").filter(Boolean).length || 1;
+      setGridMetrics({ width: grid.clientWidth, columns });
+    };
+    updateMetrics();
+    const observer = new ResizeObserver(updateMetrics);
+    observer.observe(grid);
+    return () => observer.disconnect();
+  }, []);
+
+  function handleClick(card: LayoutGridCard) {
+    setLastSelected(selected);
+    setSelected(card);
+  }
+
+  function handleOutsideClick() {
+    setLastSelected(selected);
+    setSelected(null);
+  }
+
+  function handleKeyDown(event: React.KeyboardEvent<HTMLDivElement>, card: LayoutGridCard) {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      handleClick(card);
+    }
+  }
+
+  return <div className="layout-grid gallery-grid" ref={gridRef}>
+    {cards.map((card) => {
+      const ratio = imageRatios[card.id];
+      const columnWidth = gridMetrics.width / gridMetrics.columns;
+      const imageHeight = ratio && columnWidth > 0 ? columnWidth / ratio : 240;
+      const rowSpan = Math.max(1, Math.ceil(imageHeight));
+      return <div className="layout-grid-slot" key={card.id} style={{ gridRowEnd: `span ${rowSpan}`, height: `${imageHeight}px` }}>
+      <motion.div
+        onClick={() => handleClick(card)}
+        onKeyDown={(event) => handleKeyDown(event, card)}
+        className={`gallery-card layout-grid-card${selected?.id === card.id ? " layout-grid-selected" : lastSelected?.id === card.id ? " layout-grid-last-selected" : ""}`}
+        layoutId={`card-${card.id}`}
+        role="button"
+        tabIndex={selected?.id === card.id ? -1 : 0}
+        aria-label={`${selected?.id === card.id ? "收起" : "展开"}${card.label}`}
+      >
+        {selected?.id === card.id && <LayoutGridSelectedCard card={selected} />}
+        <LayoutGridImage card={card} onRatio={(nextRatio) => setImageRatios((current) => current[card.id] === nextRatio ? current : { ...current, [card.id]: nextRatio })} />
+        <span className="gallery-layout-title">{card.label}</span>
+      </motion.div>
+      </div>;
+    })}
+    <motion.div onClick={handleOutsideClick} className={`layout-grid-backdrop${selected?.id ? " is-active" : ""}`} animate={{ opacity: selected?.id ? 0.3 : 0 }} aria-hidden="true" />
+  </div>;
+}
+
+function LayoutGridImage({ card, onRatio }: { card: LayoutGridCard; onRatio: (ratio: number) => void }) {
+  return <motion.img layoutId={`image-${card.id}-image`} src={card.thumbnail} className="gallery-card-image" alt={card.label} onLoad={(event) => {
+    const image = event.currentTarget;
+    if (image.naturalWidth > 0 && image.naturalHeight > 0) onRatio(image.naturalWidth / image.naturalHeight);
+  }} />;
+}
+
+function LayoutGridSelectedCard({ card }: { card: LayoutGridCard | null }) {
+  return <div className="layout-grid-selected-content">
+    <motion.div layoutId={`content-${card?.id}`} initial={{ opacity: 0, y: 100 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 100 }} transition={{ duration: 0.3, ease: "easeInOut" }} className="gallery-card-content layout-grid-card-content">
+      {card?.content}
+    </motion.div>
+  </div>;
+}
+
+function GalleryLayoutContent({ creation, setSelectedCreation }: { creation: Creation; setSelectedCreation: (creation: Creation) => void }) {
+  return <div className="gallery-layout-details">
+    <strong>{creation.title}</strong>
+    <small>模型 / {creation.model}</small>
+    <p>{creation.prompt}</p>
+    <button type="button" onClick={(event) => { event.stopPropagation(); setSelectedCreation(creation); }}>查看详情 <ArrowUpRight size={16} aria-hidden="true" /></button>
+  </div>;
 }
 
 function RepositoryProjectCard({ project, username, className = "" }: { project: GitHubRepository; username: string; className?: string }) {
@@ -1303,7 +1449,7 @@ function Guestbook({ visitor, message, setVisitor, setMessage, comments, submitM
   const visibleComments = comments.length > 0 ? comments : mockGuestbookComments;
   const boardHeight = 690 + Math.max(0, Math.ceil(visibleComments.length / noteLayouts.length) - 1) * 180;
 
-  return <><div className="guestbook-background" aria-hidden="true" /><section className="guestbook-wall"><div className="guestbook-canvas"><div className="note-board" aria-live="polite" style={{ "--note-board-height": `${boardHeight}px` } as React.CSSProperties}>{visibleComments.map((comment, index) => { const layout = getNoteLayout(index); return <article className={`visitor-note visitor-note-${comment.color}`} key={`${comment.name}-${index}`} style={{ "--note-x": layout.x, "--note-y": layout.y, "--note-tilt": `${layout.tilt}deg`, "--note-z": layout.z, "--note-delay": `${index * 55}ms` } as React.CSSProperties}><div className="visitor-note-top"><span className="note-pins"><i /><i /><i /></span><time>{comment.date}</time></div><p>{comment.body}</p><footer>{comment.name}</footer></article>; })}</div><section className="guestbook-editor"><form className="message-form guestbook-editor-form" onSubmit={(event) => submitMessage(event, selectedColor)}><h2>发布留言</h2><label>姓名或昵称<input value={visitor} onChange={(event) => setVisitor(event.target.value)} placeholder="请输入姓名或昵称" maxLength={20} required /></label><label>留言内容<textarea value={message} onChange={(event) => setMessage(event.target.value)} placeholder="请输入留言内容" maxLength={160} rows={5} required /></label><div className="note-color-picker" aria-label="便签颜色">{noteColors.map((color) => <button key={color} type="button" className={`note-color note-color-${color}${selectedColor === color ? " selected" : ""}`} onClick={() => setSelectedColor(color)} aria-label={`选择${color}颜色`} />)}</div><div className="message-form-footer"><span>{message.length}/160</span><button className="solid-action" type="submit">发布便签 <span>↗</span></button></div></form></section></div></section></>;
+  return <><div className="guestbook-grid-wrapper" aria-hidden="true"><div className="guestbook-grid-background" /></div><section className="guestbook-wall"><div className="guestbook-canvas"><div className="note-board" aria-live="polite" style={{ "--note-board-height": `${boardHeight}px` } as React.CSSProperties}>{visibleComments.map((comment, index) => { const layout = getNoteLayout(index); return <article className={`visitor-note visitor-note-${comment.color}`} key={`${comment.name}-${index}`} style={{ "--note-x": layout.x, "--note-y": layout.y, "--note-tilt": `${layout.tilt}deg`, "--note-z": layout.z, "--note-delay": `${index * 55}ms` } as React.CSSProperties}><p className="visitor-note-title">{comment.name}</p><p className="visitor-note-description">{comment.body}</p><time className="visitor-note-date">{comment.date}</time><div className="visitor-note-corner" aria-hidden="true"><span>→</span></div></article>; })}</div><section className="guestbook-editor"><form className="message-form guestbook-editor-form" onSubmit={(event) => submitMessage(event, selectedColor)}><h2>发布留言</h2><label>姓名或昵称<input value={visitor} onChange={(event) => setVisitor(event.target.value)} placeholder="请输入姓名或昵称" maxLength={20} required /></label><label>留言内容<textarea value={message} onChange={(event) => setMessage(event.target.value)} placeholder="请输入留言内容" maxLength={160} rows={5} required /></label><div className="note-color-picker" aria-label="便签颜色">{noteColors.map((color) => <button key={color} type="button" className={`note-color note-color-${color}${selectedColor === color ? " selected" : ""}`} onClick={() => setSelectedColor(color)} aria-label={`选择${color}颜色`} />)}</div><div className="message-form-footer"><span>{message.length}/160</span><button className="solid-action" type="submit">发布便签 <span>↗</span></button></div></form></section></div></section></>;
 }
 
 function ArticleReader({ article, close }: { article: Article; close: () => void }) {
@@ -1540,10 +1686,17 @@ function NoteDialog({ note, close }: { note: Note; close: () => void }) {
   return (
     <div className={`drawer-backdrop${closing ? " is-closing" : ""}`} onClick={requestClose}>
       <article className="drawer note-dialog" aria-label={note.title} aria-modal="true" role="dialog" onClick={(event) => event.stopPropagation()}>
+        <div className="tools" aria-hidden="true">
+          <div className="circle"><span className="red box" /></div>
+          <div className="circle"><span className="yellow box" /></div>
+          <div className="circle"><span className="green box" /></div>
+        </div>
         <button className="close-button" onClick={requestClose} aria-label="关闭" ref={closeButtonRef}>×</button>
-        <time>{note.date} / 2026</time>
-        <h2>{note.title}</h2>
-        <div className="note-dialog-content">{note.content.map((paragraph) => <p key={paragraph}>{paragraph}</p>)}</div>
+        <div className="card__content">
+          <time>{note.date} / {note.year ?? "2026"}</time>
+          <h2>{note.title}</h2>
+          {note.markdown ? <article className="note-dialog-content markdown-content"><ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>{note.markdown}</ReactMarkdown></article> : <div className="note-dialog-content">{note.content.map((paragraph) => <p key={paragraph}>{paragraph}</p>)}</div>}
+        </div>
       </article>
     </div>
   );

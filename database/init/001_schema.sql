@@ -70,3 +70,23 @@ CREATE TABLE IF NOT EXISTS music_preferences (
     external_url TEXT NOT NULL UNIQUE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+CREATE TABLE IF NOT EXISTS gallery_creations (
+    id BIGSERIAL PRIMARY KEY,
+    title TEXT NOT NULL,
+    model TEXT NOT NULL DEFAULT '',
+    prompt TEXT NOT NULL DEFAULT '',
+    image_url TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS notes (
+    id BIGSERIAL PRIMARY KEY,
+    title TEXT NOT NULL,
+    note_date DATE NOT NULL,
+    content_markdown TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS notes_note_date_idx
+    ON notes (note_date DESC, id DESC);

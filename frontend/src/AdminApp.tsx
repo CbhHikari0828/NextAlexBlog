@@ -4,6 +4,8 @@ import ReactMarkdown from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
 
+const MAX_GALLERY_IMAGE_SIZE = 10 * 1024 * 1024;
+
 const adminNavItems = [
   { label: "总览", icon: LayoutDashboard },
   { label: "文章发布", icon: FileText },
@@ -30,7 +32,7 @@ type MarkdownDraft = {
 type MarkdownEditorConfig = {
   section: "文章发布" | "笔记发布";
   draftKey: string;
-  publishedKey: string;
+  publishedKey?: string;
   showTags: boolean;
   showSummary: boolean;
   showDate: boolean;
@@ -93,6 +95,15 @@ type MusicPreference = {
   href: string;
 };
 
+type GalleryCreation = {
+  id: number;
+  title: string;
+  model: string;
+  prompt: string;
+  image: string;
+  createdAt: string;
+};
+
 const articleEditorConfig: MarkdownEditorConfig = {
   section: "文章发布",
   draftKey: "nextalex-admin-article-draft",
@@ -105,7 +116,6 @@ const articleEditorConfig: MarkdownEditorConfig = {
 const noteEditorConfig: MarkdownEditorConfig = {
   section: "笔记发布",
   draftKey: "nextalex-admin-note-draft",
-  publishedKey: "nextalex-admin-published-notes",
   showTags: false,
   showSummary: false,
   showDate: true,
@@ -173,7 +183,7 @@ function AdminApp() {
         {activeSection === "总览" && <Overview openSection={openSection} />}
         {activeSection === "文章发布" && <MarkdownEditor key={activeSection} config={articleEditorConfig} back={() => openSection("总览")} />}
         {activeSection === "笔记发布" && <MarkdownEditor key={activeSection} config={noteEditorConfig} back={() => openSection("总览")} />}
-        {activeSection === "图库发布" && <SimplePublisher key={activeSection} config={galleryPublisherConfig} back={() => openSection("总览")} />}
+        {activeSection === "图库发布" && <GalleryManager back={() => openSection("总览")} />}
         {activeSection === "项目同步" && <ProjectSync back={() => openSection("总览")} />}
         {activeSection === "Steam 同步" && <SteamSync back={() => openSection("总览")} />}
         {activeSection === "音乐管理" && <MusicManager back={() => openSection("总览")} />}
@@ -200,20 +210,41 @@ function MarkdownEditor({ config, back }: { config: MarkdownEditorConfig; back: 
     setDraft({ ...draft, [key]: value });
   }
 
-  function persist(status: "draft" | "published") {
+  async function persist(status: "draft" | "published") {
     if (!draft.title.trim() || !draft.content.trim()) {
       setSaveState("请填写标题和正文");
       return;
     }
 
     localStorage.setItem(config.draftKey, JSON.stringify(draft));
-    if (status === "published") savePublishedRecord(config.publishedKey, { ...draft, status, updatedAt: new Date().toISOString() });
-    setSaveState(status === "published" ? "已发布" : "已保存");
+    if (status === "draft") {
+      setSaveState("已保存");
+      return;
+    }
+
+    if (config.section === "笔记发布") {
+      setSaveState("发布中");
+      try {
+        const response = await fetch("/api/admin/notes", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ title: draft.title.trim(), date: draft.date, content: draft.content.trim() }),
+        });
+        if (!response.ok) throw new Error("Note publication failed");
+        setSaveState("已发布");
+      } catch {
+        setSaveState("发布失败");
+      }
+      return;
+    }
+
+    if (config.publishedKey) savePublishedRecord(config.publishedKey, { ...draft, status, updatedAt: new Date().toISOString() });
+    setSaveState("已发布");
   }
 
-  function submit(event: FormEvent<HTMLFormElement>) {
+  async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    persist("published");
+    await persist("published");
   }
 
   return <section className="admin-editor-screen">
@@ -227,16 +258,34 @@ function MarkdownEditor({ config, back }: { config: MarkdownEditorConfig; back: 
       {config.showSummary && <label className="admin-summary-field">摘要<textarea value={draft.summary} onChange={(event) => updateDraft("summary", event.target.value)} rows={3} /></label>}
       <div className="admin-editor-toolbar" role="tablist" aria-label="正文模式"><button className={editorMode === "write" ? "active" : ""} type="button" role="tab" aria-selected={editorMode === "write"} onClick={() => setEditorMode("write")}>撰写</button><button className={editorMode === "preview" ? "active" : ""} type="button" role="tab" aria-selected={editorMode === "preview"} onClick={() => setEditorMode("preview")}><Eye size={16} aria-hidden="true" />预览</button></div>
       {editorMode === "write" ? <textarea className="admin-markdown-source" aria-label="正文 Markdown" value={draft.content} onChange={(event) => updateDraft("content", event.target.value)} spellCheck={false} required /> : <article className="admin-markdown-preview markdown-content" aria-label="正文预览"><ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>{draft.content || "# "}</ReactMarkdown></article>}
-      <EditorFooter saveState={saveState} saveDraft={() => persist("draft")} />
+      <EditorFooter saveState={saveState} saveDraft={() => { void persist("draft"); }} />
     </form>
   </section>;
 }
 
-function SimplePublisher({ config, back }: { config: SimplePublisherConfig; back: () => void }) {
+function GalleryManager({ back }: { back: () => void }) {
+  const config = galleryPublisherConfig;
   const emptyValues = Object.fromEntries(config.fields.map((field) => [field.key, ""]));
-  const [values, setValues] = useState<Record<string, string>>(() => readObject(config.draftKey, emptyValues));
+  const [values, setValues] = useState<Record<string, string>>(emptyValues);
+  const [records, setRecords] = useState<GalleryCreation[]>([]);
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [mode, setMode] = useState<"list" | "publish" | "edit">("list");
+  const [imageFile, setImageFile] = useState<File | null>(null);
+  const [imagePreview, setImagePreview] = useState("");
   const [saveState, setSaveState] = useState("");
-  const isGalleryPublisher = config.section === "图库发布";
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/gallery", { cache: "no-store" })
+      .then((response) => response.ok ? response.json() as Promise<GalleryCreation[]> : Promise.reject(new Error("gallery list failed")))
+      .then((nextRecords) => { if (!cancelled) setRecords(Array.isArray(nextRecords) ? nextRecords : []); })
+      .catch(() => { if (!cancelled) setSaveState("图库列表加载失败"); });
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => () => {
+    if (imagePreview.startsWith("blob:")) URL.revokeObjectURL(imagePreview);
+  }, [imagePreview]);
 
   function selectLocalImage(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
@@ -248,39 +297,103 @@ function SimplePublisher({ config, back }: { config: SimplePublisherConfig; back
       return;
     }
 
-    if (file.size > 1024 * 1024) {
-      setSaveState("图片不能超过 1MB");
+    if (file.size > MAX_GALLERY_IMAGE_SIZE) {
+      setSaveState("图片不能超过 10MB");
       event.target.value = "";
       return;
     }
 
-    const reader = new FileReader();
-    reader.addEventListener("load", () => {
-      const imageSource = reader.result;
-      if (typeof imageSource !== "string") return;
-      setValues((current) => ({ ...current, image: imageSource, imageName: file.name }));
-      setSaveState("");
-    });
-    reader.readAsDataURL(file);
+    if (imagePreview.startsWith("blob:")) URL.revokeObjectURL(imagePreview);
+    setImageFile(file);
+    setImagePreview(URL.createObjectURL(file));
+    setValues((current) => ({ ...current, image: "", imageName: file.name }));
+    setSaveState("");
   }
 
-  function persist(status: "draft" | "published") {
-    if (config.fields.some((field) => field.required && !values[field.key]?.trim()) || (isGalleryPublisher && !values.image?.trim())) {
+  function resetForm() {
+    setValues(emptyValues);
+    setEditingId(null);
+    setImageFile(null);
+    if (imagePreview.startsWith("blob:")) URL.revokeObjectURL(imagePreview);
+    setImagePreview("");
+  }
+
+  function openPublishPage() {
+    resetForm();
+    setSaveState("");
+    setMode("publish");
+  }
+
+  function editRecord(record: GalleryCreation) {
+    if (imagePreview.startsWith("blob:")) URL.revokeObjectURL(imagePreview);
+    setEditingId(record.id);
+    setValues({ title: record.title, model: record.model, prompt: record.prompt, image: record.image, imageName: "" });
+    setImageFile(null);
+    setImagePreview(record.image);
+    setSaveState("");
+    setMode("edit");
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  async function submitGallery() {
+    if (config.fields.some((field) => field.required && !values[field.key]?.trim()) || (editingId === null && !imageFile && !values.image?.trim())) {
       setSaveState("请填写必填项");
       return;
     }
-
-    localStorage.setItem(config.draftKey, JSON.stringify(values));
-    if (status === "published") savePublishedRecord(config.publishedKey, { ...values, status, updatedAt: new Date().toISOString() });
-    setSaveState(status === "published" ? "已发布" : "已保存");
+    const payload = new FormData();
+    payload.set("title", values.title.trim());
+    payload.set("model", values.model.trim());
+    payload.set("prompt", values.prompt.trim());
+    if (imageFile) payload.set("image", imageFile);
+    else payload.set("image_url", values.image.trim());
+    try {
+      const endpoint = editingId === null ? "/api/admin/gallery" : `/api/admin/gallery/${editingId}`;
+      const response = await fetch(endpoint, { method: editingId === null ? "POST" : "PUT", body: payload });
+      if (!response.ok) throw new Error("Gallery upload failed");
+      const saved = await response.json() as GalleryCreation;
+      if (!saved.image) throw new Error("Invalid gallery response");
+      if (editingId === null) {
+        back();
+        return;
+      }
+      setRecords((current) => current.map((record) => record.id === saved.id ? saved : record));
+      setSaveState("已保存");
+      resetForm();
+      setMode("list");
+    } catch {
+      setSaveState(editingId === null ? "图片上传失败，请检查 OSS 配置" : "保存失败，请检查 OSS 配置");
+    }
   }
 
-  function submit(event: FormEvent<HTMLFormElement>) {
+  async function deleteRecord(id: number) {
+    if (!window.confirm("删除这张图片？")) return;
+    try {
+      const response = await fetch(`/api/admin/gallery/${id}`, { method: "DELETE" });
+      if (!response.ok) throw new Error("Gallery delete failed");
+      setRecords((current) => current.filter((record) => record.id !== id));
+      if (editingId === id) {
+        resetForm();
+        setMode("list");
+      }
+    } catch {
+      setSaveState("删除失败");
+    }
+  }
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    persist("published");
+    await submitGallery();
   }
 
-  return <section className="admin-editor-screen"><WorkspaceHeader title={config.section} back={back} /><form className="admin-form-editor" onSubmit={submit}><div className="admin-form-grid">{config.fields.map((field) => <label className={field.kind === "textarea" ? "wide" : ""} key={field.key}>{field.label}{field.kind === "textarea" ? <textarea value={values[field.key]} onChange={(event) => setValues({ ...values, [field.key]: event.target.value })} rows={8} required={field.required} /> : <input type={field.inputType || "text"} value={values[field.key]} onChange={(event) => setValues({ ...values, [field.key]: event.target.value })} required={field.required} />}</label>)}{isGalleryPublisher && <label className="admin-image-upload wide">本地图片<span className="admin-file-picker"><Upload size={16} aria-hidden="true" /><span>{values.imageName || "选择图片"}</span><input type="file" accept="image/*" aria-label="本地图片" onChange={selectLocalImage} /></span></label>}</div>{isGalleryPublisher && values.image && <figure className="admin-image-preview"><img src={values.image} alt={values.title || "图片预览"} /><button type="button" aria-label="移除已选图片" title="移除图片" onClick={() => setValues((current) => ({ ...current, image: "", imageName: "" }))}><X size={16} aria-hidden="true" /></button></figure>}<EditorFooter saveState={saveState} saveDraft={() => persist("draft")} /></form></section>;
+  const recordsPanel = <section className="admin-gallery-list" aria-label="已发布图片"><header><div><h2>已发布图片</h2><span>{records.length}</span></div><button className="admin-primary-button" type="button" onClick={openPublishPage}><Image size={16} aria-hidden="true" />发布图片</button></header>{records.length === 0 ? <p className="admin-empty-state">暂无图片</p> : <div className="admin-gallery-records">{records.map((record) => <article key={record.id}><img src={record.image} alt={record.title} /><div className="admin-gallery-record-body"><strong>{record.title}</strong><span>{record.model}</span><p>{record.prompt}</p></div><div className="admin-gallery-record-actions"><button type="button" className="admin-secondary-button" onClick={() => editRecord(record)}>编辑</button><button type="button" className="admin-delete-button" aria-label={`删除${record.title}`} title="删除" onClick={() => deleteRecord(record.id)}><Trash2 size={16} aria-hidden="true" /></button></div></article>)}</div>}</section>;
+  const editorPage = <form className="admin-form-editor" onSubmit={submit}>
+    <div className="admin-gallery-editor-heading"><strong>{mode === "edit" ? "编辑图片" : "发布图片"}</strong><button className="admin-secondary-button" type="button" onClick={() => { resetForm(); setMode("list"); }}>返回列表</button></div>
+    <div className="admin-form-grid">{config.fields.map((field) => <label className={field.kind === "textarea" ? "wide" : ""} key={field.key}>{field.label}{field.kind === "textarea" ? <textarea value={values[field.key] || ""} onChange={(event) => setValues({ ...values, [field.key]: event.target.value })} rows={8} required={field.required} /> : <input type={field.inputType || "text"} value={values[field.key] || ""} onChange={(event) => setValues({ ...values, [field.key]: event.target.value })} required={field.required} />}</label>)}<label className="admin-image-upload wide">本地图片<span className="admin-file-picker"><Upload size={16} aria-hidden="true" /><span>{values.imageName || "选择图片"}</span><input type="file" accept="image/*" aria-label="本地图片" onChange={selectLocalImage} /></span></label></div>
+    {(imagePreview || values.image) && <figure className="admin-image-preview"><img src={imagePreview || values.image} alt={values.title || "图片预览"} /><button type="button" aria-label="移除已选图片" title="移除图片" onClick={() => { setImageFile(null); if (imagePreview.startsWith("blob:")) URL.revokeObjectURL(imagePreview); setImagePreview(""); setValues((current) => ({ ...current, image: "", imageName: "" })); }}><X size={16} aria-hidden="true" /></button></figure>}
+    <footer className="admin-editor-footer"><span aria-live="polite">{saveState}</span><div><button className="admin-primary-button" type="submit"><Send size={16} aria-hidden="true" />{mode === "edit" ? "保存修改" : "发布图片"}</button></div></footer>
+  </form>;
+
+  return <section className="admin-editor-screen"><WorkspaceHeader title={mode === "list" ? "图库管理" : mode === "edit" ? "编辑图片" : "发布图片"} back={mode === "list" ? back : () => { resetForm(); setMode("list"); }} />{mode === "list" ? recordsPanel : editorPage}</section>;
 }
 
 function EditorFooter({ saveState, saveDraft }: { saveState: string; saveDraft: () => void }) {

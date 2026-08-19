@@ -39,6 +39,11 @@ type memoryMusicPreferenceStore struct {
 	nextID      int64
 }
 
+type memoryNoteStore struct {
+	notes  []noteRecord
+	nextID int64
+}
+
 func (store *memoryGitHubOverviewStore) LoadGitHubOverview(context.Context) (githubOverview, time.Time, error) {
 	if !store.hasSnapshot {
 		return githubOverview{}, time.Time{}, errGitHubOverviewNotFound
@@ -95,6 +100,79 @@ func (store *memoryMusicPreferenceStore) DeleteMusicPreference(_ context.Context
 		}
 	}
 	return errMusicPreferenceNotFound
+}
+
+func (store *memoryNoteStore) ListNotes(context.Context) ([]noteRecord, error) {
+	return append([]noteRecord(nil), store.notes...), nil
+}
+
+func (store *memoryNoteStore) SaveNote(_ context.Context, note noteRecord) (noteRecord, error) {
+	store.nextID++
+	note.ID = store.nextID
+	note.CreatedAt = time.Date(2026, time.August, 19, 12, 0, 0, 0, time.UTC)
+	store.notes = append([]noteRecord{note}, store.notes...)
+	return note, nil
+}
+
+func TestNotesCanBePublishedAndListed(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	store := &memoryNoteStore{}
+	router := gin.New()
+	router.GET("/notes", notesHandler(store))
+	router.POST("/admin/notes", noteCreateHandler(store))
+
+	publishResponse := httptest.NewRecorder()
+	publishRequest := httptest.NewRequest(http.MethodPost, "/admin/notes", strings.NewReader(`{"title":"Concurrent notes","date":"2026-08-19","content":"# Heading\n\nSaved markdown."}`))
+	publishRequest.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(publishResponse, publishRequest)
+	if publishResponse.Code != http.StatusCreated {
+		t.Fatalf("POST /admin/notes returned %d, want %d", publishResponse.Code, http.StatusCreated)
+	}
+
+	var published noteRecord
+	if err := json.Unmarshal(publishResponse.Body.Bytes(), &published); err != nil {
+		t.Fatalf("decode published note: %v", err)
+	}
+	if published.ID != 1 || published.Title != "Concurrent notes" || published.Date != "2026-08-19" || published.Content != "# Heading\n\nSaved markdown." {
+		t.Fatalf("unexpected published note: %#v", published)
+	}
+
+	listResponse := httptest.NewRecorder()
+	router.ServeHTTP(listResponse, httptest.NewRequest(http.MethodGet, "/notes", nil))
+	if listResponse.Code != http.StatusOK {
+		t.Fatalf("GET /notes returned %d, want %d", listResponse.Code, http.StatusOK)
+	}
+	var listed []noteRecord
+	if err := json.Unmarshal(listResponse.Body.Bytes(), &listed); err != nil {
+		t.Fatalf("decode listed notes: %v", err)
+	}
+	if len(listed) != 1 || listed[0].ID != published.ID {
+		t.Fatalf("unexpected listed notes: %#v", listed)
+	}
+}
+
+func TestNotePublicationValidatesRequiredFieldsAndDate(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	store := &memoryNoteStore{}
+	router := gin.New()
+	router.POST("/admin/notes", noteCreateHandler(store))
+
+	for _, body := range []string{
+		`{"title":"","date":"2026-08-19","content":"Body"}`,
+		`{"title":"Note","date":"19-08-2026","content":"Body"}`,
+		`{"title":"Note","date":"2026-08-19","content":""}`,
+	} {
+		response := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodPost, "/admin/notes", strings.NewReader(body))
+		request.Header.Set("Content-Type", "application/json")
+		router.ServeHTTP(response, request)
+		if response.Code != http.StatusBadRequest {
+			t.Fatalf("POST /admin/notes with %s returned %d, want %d", body, response.Code, http.StatusBadRequest)
+		}
+	}
+	if len(store.notes) != 0 {
+		t.Fatalf("invalid note request saved records: %#v", store.notes)
+	}
 }
 
 func TestAppleMusicImportStoresAndPublishesMetadata(t *testing.T) {
