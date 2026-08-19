@@ -2,21 +2,26 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
+	cryptorand "crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log"
+	"mime/multipart"
 	"net/http"
 	"net/url"
 	"os"
+	"path"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/aliyun/aliyun-oss-go-sdk/oss"
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -26,6 +31,8 @@ import (
 var contributionCountPattern = regexp.MustCompile(`([0-9][0-9,]*)\s+contribution`)
 var steamIDPattern = regexp.MustCompile(`^\d{17}$`)
 var isoDurationPattern = regexp.MustCompile(`^PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?$`)
+
+const maxGalleryImageSize int64 = 10 * 1024 * 1024
 
 type contributionDay struct {
 	Date  string `json:"date"`
@@ -72,6 +79,62 @@ type musicPreferenceStore interface {
 	SaveMusicPreference(context.Context, musicPreference) (musicPreference, error)
 	DeleteMusicPreference(context.Context, int64) error
 }
+
+type galleryCreation struct {
+	ID        int64     `json:"id"`
+	Title     string    `json:"title"`
+	Model     string    `json:"model"`
+	Prompt    string    `json:"prompt"`
+	ImageURL  string    `json:"image"`
+	CreatedAt time.Time `json:"createdAt"`
+}
+
+type galleryCreationStore interface {
+	ListGalleryCreations(context.Context) ([]galleryCreation, error)
+	SaveGalleryCreation(context.Context, galleryCreation) (galleryCreation, error)
+	UpdateGalleryCreation(context.Context, galleryCreation) (galleryCreation, error)
+	DeleteGalleryCreation(context.Context, int64) (galleryCreation, error)
+}
+
+type postgresGalleryCreationStore struct {
+	pool *pgxpool.Pool
+}
+
+type noteRecord struct {
+	ID        int64     `json:"id"`
+	Title     string    `json:"title"`
+	Date      string    `json:"date"`
+	Content   string    `json:"content"`
+	CreatedAt time.Time `json:"createdAt"`
+}
+
+type noteStore interface {
+	ListNotes(context.Context) ([]noteRecord, error)
+	SaveNote(context.Context, noteRecord) (noteRecord, error)
+}
+
+type postgresNoteStore struct {
+	pool *pgxpool.Pool
+}
+
+type uploadedGalleryImage struct {
+	URL string
+	Key string
+}
+
+type galleryImageStorage interface {
+	Upload(context.Context, string, string, []byte) (uploadedGalleryImage, error)
+	Delete(context.Context, string) error
+}
+
+type galleryImageURLDeleter interface {
+	DeleteURL(context.Context, string) error
+}
+
+var errGalleryStorageNotConfigured = errors.New("gallery image storage is not configured")
+var errGalleryImageTooLarge = errors.New("gallery image exceeds 10 MB")
+var errGalleryImageType = errors.New("unsupported gallery image type")
+var errGalleryCreationNotFound = errors.New("gallery creation not found")
 
 type postgresMusicPreferenceStore struct {
 	pool *pgxpool.Pool
@@ -175,6 +238,206 @@ func (store postgresMusicPreferenceStore) DeleteMusicPreference(ctx context.Cont
 		return errMusicPreferenceNotFound
 	}
 	return nil
+}
+
+func (store postgresGalleryCreationStore) ListGalleryCreations(ctx context.Context) ([]galleryCreation, error) {
+	rows, err := store.pool.Query(ctx, `
+		SELECT id, title, model, prompt, image_url, created_at
+		FROM gallery_creations
+		ORDER BY created_at DESC, id DESC
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("list gallery creations: %w", err)
+	}
+	defer rows.Close()
+
+	creations := make([]galleryCreation, 0)
+	for rows.Next() {
+		var creation galleryCreation
+		if err := rows.Scan(&creation.ID, &creation.Title, &creation.Model, &creation.Prompt, &creation.ImageURL, &creation.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scan gallery creation: %w", err)
+		}
+		creations = append(creations, creation)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate gallery creations: %w", err)
+	}
+	return creations, nil
+}
+
+func (store postgresGalleryCreationStore) SaveGalleryCreation(ctx context.Context, creation galleryCreation) (galleryCreation, error) {
+	err := store.pool.QueryRow(ctx, `
+		INSERT INTO gallery_creations (title, model, prompt, image_url)
+		VALUES ($1, $2, $3, $4)
+		RETURNING id, title, model, prompt, image_url, created_at
+	`, creation.Title, creation.Model, creation.Prompt, creation.ImageURL).Scan(
+		&creation.ID,
+		&creation.Title,
+		&creation.Model,
+		&creation.Prompt,
+		&creation.ImageURL,
+		&creation.CreatedAt,
+	)
+	if err != nil {
+		return galleryCreation{}, fmt.Errorf("save gallery creation: %w", err)
+	}
+	return creation, nil
+}
+
+func (store postgresGalleryCreationStore) UpdateGalleryCreation(ctx context.Context, creation galleryCreation) (galleryCreation, error) {
+	err := store.pool.QueryRow(ctx, `
+		UPDATE gallery_creations
+		SET title = $1, model = $2, prompt = $3, image_url = $4
+		WHERE id = $5
+		RETURNING id, title, model, prompt, image_url, created_at
+	`, creation.Title, creation.Model, creation.Prompt, creation.ImageURL, creation.ID).Scan(
+		&creation.ID,
+		&creation.Title,
+		&creation.Model,
+		&creation.Prompt,
+		&creation.ImageURL,
+		&creation.CreatedAt,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return galleryCreation{}, errGalleryCreationNotFound
+	}
+	if err != nil {
+		return galleryCreation{}, fmt.Errorf("update gallery creation: %w", err)
+	}
+	return creation, nil
+}
+
+func (store postgresGalleryCreationStore) DeleteGalleryCreation(ctx context.Context, id int64) (galleryCreation, error) {
+	var creation galleryCreation
+	err := store.pool.QueryRow(ctx, `
+		DELETE FROM gallery_creations
+		WHERE id = $1
+		RETURNING id, title, model, prompt, image_url, created_at
+	`, id).Scan(&creation.ID, &creation.Title, &creation.Model, &creation.Prompt, &creation.ImageURL, &creation.CreatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return galleryCreation{}, errGalleryCreationNotFound
+	}
+	if err != nil {
+		return galleryCreation{}, fmt.Errorf("delete gallery creation: %w", err)
+	}
+	return creation, nil
+}
+
+func (store postgresNoteStore) ListNotes(ctx context.Context) ([]noteRecord, error) {
+	rows, err := store.pool.Query(ctx, `
+		SELECT id, title, note_date::TEXT, content_markdown, created_at
+		FROM notes
+		ORDER BY note_date DESC, id DESC
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("list notes: %w", err)
+	}
+	defer rows.Close()
+
+	notes := make([]noteRecord, 0)
+	for rows.Next() {
+		var note noteRecord
+		if err := rows.Scan(&note.ID, &note.Title, &note.Date, &note.Content, &note.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scan note: %w", err)
+		}
+		notes = append(notes, note)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate notes: %w", err)
+	}
+	return notes, nil
+}
+
+func (store postgresNoteStore) SaveNote(ctx context.Context, note noteRecord) (noteRecord, error) {
+	err := store.pool.QueryRow(ctx, `
+		INSERT INTO notes (title, note_date, content_markdown)
+		VALUES ($1, $2::DATE, $3)
+		RETURNING id, title, note_date::TEXT, content_markdown, created_at
+	`, note.Title, note.Date, note.Content).Scan(
+		&note.ID,
+		&note.Title,
+		&note.Date,
+		&note.Content,
+		&note.CreatedAt,
+	)
+	if err != nil {
+		return noteRecord{}, fmt.Errorf("save note: %w", err)
+	}
+	return note, nil
+}
+
+type ossGalleryImageStorage struct {
+	bucket        *oss.Bucket
+	bucketName    string
+	endpoint      string
+	publicBaseURL string
+}
+
+func newOSSGalleryImageStorage() (galleryImageStorage, error) {
+	endpoint := strings.TrimSpace(os.Getenv("OSS_ENDPOINT"))
+	bucketName := strings.TrimSpace(os.Getenv("OSS_BUCKET"))
+	accessKeyID := strings.TrimSpace(os.Getenv("OSS_ACCESS_KEY_ID"))
+	accessKeySecret := strings.TrimSpace(os.Getenv("OSS_ACCESS_KEY_SECRET"))
+	if endpoint == "" || bucketName == "" || accessKeyID == "" || accessKeySecret == "" {
+		return nil, errGalleryStorageNotConfigured
+	}
+	endpoint = strings.TrimRight(strings.TrimPrefix(strings.TrimPrefix(endpoint, "https://"), "http://"), "/")
+	client, err := oss.New(endpoint, accessKeyID, accessKeySecret)
+	if err != nil {
+		return nil, fmt.Errorf("create OSS client: %w", err)
+	}
+	bucket, err := client.Bucket(bucketName)
+	if err != nil {
+		return nil, fmt.Errorf("open OSS bucket: %w", err)
+	}
+	return &ossGalleryImageStorage{
+		bucket:        bucket,
+		bucketName:    bucketName,
+		endpoint:      endpoint,
+		publicBaseURL: strings.TrimRight(strings.TrimSpace(os.Getenv("OSS_PUBLIC_BASE_URL")), "/"),
+	}, nil
+}
+
+func (storage *ossGalleryImageStorage) Upload(_ context.Context, extension string, contentType string, data []byte) (uploadedGalleryImage, error) {
+	randomBytes := make([]byte, 8)
+	if _, err := cryptorand.Read(randomBytes); err != nil {
+		return uploadedGalleryImage{}, fmt.Errorf("generate gallery image key: %w", err)
+	}
+	key := path.Join("gallery", time.Now().UTC().Format("2006/01"), fmt.Sprintf("%d-%x%s", time.Now().UTC().UnixNano(), randomBytes, extension))
+	if err := storage.bucket.PutObject(key, bytes.NewReader(data), oss.ContentType(contentType)); err != nil {
+		return uploadedGalleryImage{}, fmt.Errorf("upload gallery image to OSS: %w", err)
+	}
+	return uploadedGalleryImage{URL: storage.objectURL(key), Key: key}, nil
+}
+
+func (storage *ossGalleryImageStorage) Delete(_ context.Context, key string) error {
+	if strings.TrimSpace(key) == "" {
+		return nil
+	}
+	return storage.bucket.DeleteObject(key)
+}
+
+func (storage *ossGalleryImageStorage) DeleteURL(ctx context.Context, rawURL string) error {
+	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil || parsed.Hostname() == "" {
+		return nil
+	}
+	key := strings.TrimPrefix(parsed.Path, "/")
+	if !strings.HasPrefix(key, "gallery/") {
+		return nil
+	}
+	key, err = url.PathUnescape(key)
+	if err != nil {
+		return nil
+	}
+	return storage.Delete(ctx, key)
+}
+
+func (storage *ossGalleryImageStorage) objectURL(key string) string {
+	if storage.publicBaseURL != "" {
+		return storage.publicBaseURL + "/" + key
+	}
+	return "https://" + storage.bucketName + "." + storage.endpoint + "/" + key
 }
 
 type githubProfile struct {
@@ -381,6 +644,16 @@ func main() {
 	if err := ensureMusicPreferencesTable(context.Background(), pool); err != nil {
 		log.Fatalf("ensure music preferences table: %v", err)
 	}
+	if err := ensureGalleryCreationsTable(context.Background(), pool); err != nil {
+		log.Fatalf("ensure gallery creations table: %v", err)
+	}
+	if err := ensureNotesTable(context.Background(), pool); err != nil {
+		log.Fatalf("ensure notes table: %v", err)
+	}
+	galleryStorage, storageErr := newOSSGalleryImageStorage()
+	if storageErr != nil && !errors.Is(storageErr, errGalleryStorageNotConfigured) {
+		log.Printf("gallery image storage unavailable: %v", storageErr)
+	}
 
 	router := gin.New()
 	router.Use(gin.Logger(), gin.Recovery())
@@ -399,6 +672,14 @@ func main() {
 	router.GET("/api/music", musicPreferencesHandler(musicStore))
 	router.POST("/api/admin/music/import", musicImportHandler(musicClient, musicStore))
 	router.DELETE("/api/admin/music/:id", musicDeleteHandler(musicStore))
+	galleryStore := postgresGalleryCreationStore{pool: pool}
+	router.GET("/api/gallery", galleryCreationsHandler(galleryStore))
+	router.POST("/api/admin/gallery", galleryCreationImportHandler(galleryStorage, galleryStore))
+	router.PUT("/api/admin/gallery/:id", galleryCreationUpdateHandler(galleryStorage, galleryStore))
+	router.DELETE("/api/admin/gallery/:id", galleryCreationDeleteHandler(galleryStorage, galleryStore))
+	noteStore := postgresNoteStore{pool: pool}
+	router.GET("/api/notes", notesHandler(noteStore))
+	router.POST("/api/admin/notes", noteCreateHandler(noteStore))
 
 	server := &http.Server{
 		Addr:              ":" + port,
@@ -521,6 +802,39 @@ func ensureMusicPreferencesTable(ctx context.Context, pool *pgxpool.Pool) error 
 			external_url TEXT NOT NULL UNIQUE,
 			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 		)
+	`)
+	return err
+}
+
+func ensureGalleryCreationsTable(ctx context.Context, pool *pgxpool.Pool) error {
+	_, err := pool.Exec(ctx, `
+		CREATE TABLE IF NOT EXISTS gallery_creations (
+			id BIGSERIAL PRIMARY KEY,
+			title TEXT NOT NULL,
+			model TEXT NOT NULL DEFAULT '',
+			prompt TEXT NOT NULL DEFAULT '',
+			image_url TEXT NOT NULL,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)
+	`)
+	return err
+}
+
+func ensureNotesTable(ctx context.Context, pool *pgxpool.Pool) error {
+	if _, err := pool.Exec(ctx, `
+		CREATE TABLE IF NOT EXISTS notes (
+			id BIGSERIAL PRIMARY KEY,
+			title TEXT NOT NULL,
+			note_date DATE NOT NULL,
+			content_markdown TEXT NOT NULL,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)
+	`); err != nil {
+		return err
+	}
+	_, err := pool.Exec(ctx, `
+		CREATE INDEX IF NOT EXISTS notes_note_date_idx
+		ON notes (note_date DESC, id DESC)
 	`)
 	return err
 }
@@ -1220,6 +1534,302 @@ func musicDeleteHandler(store musicPreferenceStore) gin.HandlerFunc {
 		}
 		c.Status(http.StatusNoContent)
 	}
+}
+
+func galleryCreationsHandler(store galleryCreationStore) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		creations, err := store.ListGalleryCreations(c.Request.Context())
+		if err != nil {
+			log.Printf("load gallery creations: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "gallery data is temporarily unavailable"})
+			return
+		}
+		c.JSON(http.StatusOK, creations)
+	}
+}
+
+func notesHandler(store noteStore) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		notes, err := store.ListNotes(c.Request.Context())
+		if err != nil {
+			log.Printf("load notes: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "notes are temporarily unavailable"})
+			return
+		}
+		c.JSON(http.StatusOK, notes)
+	}
+}
+
+func noteCreateHandler(store noteStore) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var payload struct {
+			Title   string `json:"title"`
+			Date    string `json:"date"`
+			Content string `json:"content"`
+		}
+		if err := c.ShouldBindJSON(&payload); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid note payload"})
+			return
+		}
+
+		payload.Title = strings.TrimSpace(payload.Title)
+		payload.Date = strings.TrimSpace(payload.Date)
+		payload.Content = strings.TrimSpace(payload.Content)
+		if payload.Title == "" || payload.Date == "" || payload.Content == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "title, date, and content are required"})
+			return
+		}
+		if _, err := time.Parse("2006-01-02", payload.Date); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "date must use YYYY-MM-DD"})
+			return
+		}
+
+		note, err := store.SaveNote(c.Request.Context(), noteRecord{
+			Title:   payload.Title,
+			Date:    payload.Date,
+			Content: payload.Content,
+		})
+		if err != nil {
+			log.Printf("save note: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "note could not be saved"})
+			return
+		}
+		c.JSON(http.StatusCreated, note)
+	}
+}
+
+func galleryCreationImportHandler(storage galleryImageStorage, store galleryCreationStore) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if err := parseGalleryMultipart(c); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid gallery upload"})
+			return
+		}
+		title, model, prompt, imageURL := galleryFormValues(c)
+		if title == "" || model == "" || prompt == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "title, model, and prompt are required"})
+			return
+		}
+
+		var uploaded uploadedGalleryImage
+		var err error
+		uploaded, imageURL, err = uploadGalleryFormImage(c, storage, imageURL)
+		if err != nil {
+			respondGalleryImageError(c, err)
+			return
+		}
+		if imageURL == "" || !isValidGalleryImageURL(imageURL) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "an image upload or HTTPS image URL is required"})
+			return
+		}
+
+		saved, err := store.SaveGalleryCreation(c.Request.Context(), galleryCreation{Title: title, Model: model, Prompt: prompt, ImageURL: imageURL})
+		if err != nil {
+			if uploaded.Key != "" && storage != nil {
+				if deleteErr := storage.Delete(c.Request.Context(), uploaded.Key); deleteErr != nil {
+					log.Printf("remove orphaned gallery image: %v", deleteErr)
+				}
+			}
+			log.Printf("save gallery creation: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "gallery data could not be saved"})
+			return
+		}
+		c.JSON(http.StatusOK, saved)
+	}
+}
+
+func galleryCreationUpdateHandler(storage galleryImageStorage, store galleryCreationStore) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+		if err != nil || id < 1 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid gallery id"})
+			return
+		}
+		if err := parseGalleryMultipart(c); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid gallery upload"})
+			return
+		}
+		title, model, prompt, imageURL := galleryFormValues(c)
+		if title == "" || model == "" || prompt == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "title, model, and prompt are required"})
+			return
+		}
+
+		current, err := findGalleryCreation(c.Request.Context(), store, id)
+		if errors.Is(err, errGalleryCreationNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "gallery creation not found"})
+			return
+		}
+		if err != nil {
+			log.Printf("load gallery creation: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "gallery data could not be loaded"})
+			return
+		}
+
+		if imageURL == "" {
+			imageURL = current.ImageURL
+		}
+		var uploaded uploadedGalleryImage
+		uploaded, imageURL, err = uploadGalleryFormImage(c, storage, imageURL)
+		if err != nil {
+			respondGalleryImageError(c, err)
+			return
+		}
+		if imageURL == "" || !isValidGalleryImageURL(imageURL) {
+			if uploaded.Key != "" {
+				_ = storage.Delete(c.Request.Context(), uploaded.Key)
+			}
+			c.JSON(http.StatusBadRequest, gin.H{"error": "an image upload or HTTPS image URL is required"})
+			return
+		}
+
+		updated, err := store.UpdateGalleryCreation(c.Request.Context(), galleryCreation{ID: id, Title: title, Model: model, Prompt: prompt, ImageURL: imageURL})
+		if err != nil {
+			if uploaded.Key != "" {
+				if deleteErr := storage.Delete(c.Request.Context(), uploaded.Key); deleteErr != nil {
+					log.Printf("remove orphaned gallery image: %v", deleteErr)
+				}
+			}
+			if errors.Is(err, errGalleryCreationNotFound) {
+				c.JSON(http.StatusNotFound, gin.H{"error": "gallery creation not found"})
+				return
+			}
+			log.Printf("update gallery creation: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "gallery data could not be saved"})
+			return
+		}
+
+		if updated.ImageURL != current.ImageURL && storage != nil {
+			if deleter, ok := storage.(galleryImageURLDeleter); ok {
+				if deleteErr := deleter.DeleteURL(c.Request.Context(), current.ImageURL); deleteErr != nil {
+					log.Printf("remove replaced gallery image: %v", deleteErr)
+				}
+			}
+		}
+		c.JSON(http.StatusOK, updated)
+	}
+}
+
+func galleryCreationDeleteHandler(storage galleryImageStorage, store galleryCreationStore) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+		if err != nil || id < 1 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid gallery id"})
+			return
+		}
+		deleted, err := store.DeleteGalleryCreation(c.Request.Context(), id)
+		if errors.Is(err, errGalleryCreationNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "gallery creation not found"})
+			return
+		}
+		if err != nil {
+			log.Printf("delete gallery creation: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "gallery data could not be deleted"})
+			return
+		}
+		if storage != nil {
+			if deleter, ok := storage.(galleryImageURLDeleter); ok {
+				if deleteErr := deleter.DeleteURL(c.Request.Context(), deleted.ImageURL); deleteErr != nil {
+					log.Printf("remove deleted gallery image: %v", deleteErr)
+				}
+			}
+		}
+		c.Status(http.StatusNoContent)
+	}
+}
+
+func parseGalleryMultipart(c *gin.Context) error {
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxGalleryImageSize+2*1024*1024)
+	return c.Request.ParseMultipartForm(maxGalleryImageSize + 2*1024*1024)
+}
+
+func galleryFormValues(c *gin.Context) (string, string, string, string) {
+	return strings.TrimSpace(c.PostForm("title")), strings.TrimSpace(c.PostForm("model")), strings.TrimSpace(c.PostForm("prompt")), strings.TrimSpace(c.PostForm("image_url"))
+}
+
+func uploadGalleryFormImage(c *gin.Context, storage galleryImageStorage, imageURL string) (uploadedGalleryImage, string, error) {
+	fileHeader, fileErr := c.FormFile("image")
+	if errors.Is(fileErr, http.ErrMissingFile) {
+		return uploadedGalleryImage{}, imageURL, nil
+	}
+	if fileErr != nil {
+		return uploadedGalleryImage{}, imageURL, fileErr
+	}
+	if storage == nil {
+		return uploadedGalleryImage{}, imageURL, errGalleryStorageNotConfigured
+	}
+	data, contentType, extension, err := readGalleryImage(fileHeader)
+	if err != nil {
+		return uploadedGalleryImage{}, imageURL, err
+	}
+	uploaded, err := storage.Upload(c.Request.Context(), extension, contentType, data)
+	if err != nil {
+		return uploadedGalleryImage{}, imageURL, err
+	}
+	return uploaded, uploaded.URL, nil
+}
+
+func respondGalleryImageError(c *gin.Context, err error) {
+	switch {
+	case errors.Is(err, errGalleryStorageNotConfigured):
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "OSS image storage is not configured"})
+	case errors.Is(err, errGalleryImageTooLarge):
+		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "image cannot exceed 10 MB"})
+	case errors.Is(err, errGalleryImageType):
+		c.JSON(http.StatusBadRequest, gin.H{"error": "only JPEG, PNG, GIF, and WebP images are supported"})
+	default:
+		log.Printf("gallery image operation: %v", err)
+		c.JSON(http.StatusBadGateway, gin.H{"error": "gallery image could not be uploaded"})
+	}
+}
+
+func findGalleryCreation(ctx context.Context, store galleryCreationStore, id int64) (galleryCreation, error) {
+	creations, err := store.ListGalleryCreations(ctx)
+	if err != nil {
+		return galleryCreation{}, err
+	}
+	for _, creation := range creations {
+		if creation.ID == id {
+			return creation, nil
+		}
+	}
+	return galleryCreation{}, errGalleryCreationNotFound
+}
+
+func readGalleryImage(fileHeader *multipart.FileHeader) ([]byte, string, string, error) {
+	if fileHeader == nil {
+		return nil, "", "", errGalleryImageType
+	}
+	if fileHeader.Size > maxGalleryImageSize {
+		return nil, "", "", errGalleryImageTooLarge
+	}
+	file, err := fileHeader.Open()
+	if err != nil {
+		return nil, "", "", err
+	}
+	defer file.Close()
+	data, err := io.ReadAll(io.LimitReader(file, maxGalleryImageSize+1))
+	if err != nil {
+		return nil, "", "", err
+	}
+	if int64(len(data)) > maxGalleryImageSize {
+		return nil, "", "", errGalleryImageTooLarge
+	}
+	contentType := http.DetectContentType(data)
+	extension := map[string]string{
+		"image/jpeg": ".jpg",
+		"image/png":  ".png",
+		"image/gif":  ".gif",
+		"image/webp": ".webp",
+	}[contentType]
+	if extension == "" {
+		return nil, "", "", errGalleryImageType
+	}
+	return data, contentType, extension, nil
+}
+
+func isValidGalleryImageURL(raw string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	return err == nil && parsed.Hostname() != "" && parsed.User == nil && (parsed.Scheme == "https" || parsed.Scheme == "http")
 }
 
 func steamOverviewHandler(store steamOverviewStore) gin.HandlerFunc {

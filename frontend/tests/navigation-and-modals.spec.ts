@@ -21,7 +21,44 @@ test.describe("页面切换和弹窗交互", () => {
     await expect.poll(() => page.evaluate(() => localStorage.getItem("nextalex-admin-article-draft"))).toContain("Markdown 发布测试");
   });
 
+  test("笔记发布写入接口并在前台以卡片展示", async ({ page }) => {
+    const records = [{ id: 1, title: "Persistent note", date: "2026-08-19", content: "# Persistent note\n\nSaved by API.", createdAt: "2026-08-19T12:00:00Z" }];
+    await page.route("**/api/admin/notes", async (route) => {
+      expect(route.request().method()).toBe("POST");
+      expect(route.request().postDataJSON()).toMatchObject({ title: "Persistent note", date: "2026-08-19", content: "# Persistent note\n\nSaved by API." });
+      await route.fulfill({ status: 201, contentType: "application/json", body: JSON.stringify(records[0]) });
+    });
+    await page.route("**/api/notes", async (route) => {
+      expect(route.request().method()).toBe("GET");
+      await route.fulfill({ contentType: "application/json", body: JSON.stringify(records) });
+    });
+
+    await page.goto("/admin");
+    await page.locator(".admin-nav").getByRole("button").nth(2).click();
+    const editor = page.locator(".admin-article-editor");
+    await editor.locator("input").nth(0).fill("Persistent note");
+    await editor.locator("input[type=date]").fill("2026-08-19");
+    await editor.locator("textarea").fill("# Persistent note\n\nSaved by API.");
+    await editor.locator("button[type=submit]").click();
+    await expect(editor.locator(".admin-editor-footer > span")).toHaveText("已发布");
+
+    await page.goto("/");
+    await page.locator(".main-nav").getByRole("tab").nth(2).click();
+    const note = page.locator(".note-entry").filter({ hasText: "Persistent note" });
+    await expect(note).toBeVisible();
+    await note.click();
+    await expect(page.locator(".note-dialog")).toContainText("Saved by API.");
+  });
+
   test("管理员端保留的发布入口均可保存内容", async ({ page }) => {
+    const galleryRecord = { id: 1, title: "抽象几何", model: "Flux", prompt: "abstract geometry", image: "https://oss.example.com/gallery/abstract.png", createdAt: "2026-08-19T00:00:00Z" };
+    await page.route("**/api/admin/gallery", async (route) => {
+      expect(route.request().method()).toBe("POST");
+      await route.fulfill({ contentType: "application/json", body: JSON.stringify(galleryRecord) });
+    });
+    await page.route("**/api/gallery", async (route) => {
+      await route.fulfill({ contentType: "application/json", body: JSON.stringify([galleryRecord]) });
+    });
     await page.goto("/admin");
 
     const navigation = page.locator(".admin-nav");
@@ -34,6 +71,7 @@ test.describe("页面切换和弹窗交互", () => {
     await expect.poll(() => page.evaluate(() => localStorage.getItem("nextalex-admin-note-draft"))).toContain("并发学习记录");
 
     await navigation.getByRole("button", { name: "图库发布" }).click();
+    await page.getByRole("button", { name: "发布图片" }).first().click();
     const galleryEditor = page.locator(".admin-form-editor");
     await galleryEditor.getByLabel("标题").fill("抽象几何");
     await galleryEditor.getByLabel("本地图片").setInputFiles({
@@ -41,17 +79,16 @@ test.describe("页面切换和弹窗交互", () => {
       mimeType: "image/png",
       buffer: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9WlqP8QAAAAASUVORK5CYII=", "base64"),
     });
-    await expect(galleryEditor.locator(".admin-image-preview img")).toHaveAttribute("src", /^data:image\/png;base64,/);
+    await expect(galleryEditor.locator(".admin-image-preview img")).toHaveAttribute("src", /^blob:/);
     await galleryEditor.getByLabel("模型").fill("Flux");
     await galleryEditor.getByLabel("提示词").fill("abstract geometry");
     await galleryEditor.getByRole("button", { name: "发布" }).click();
-    await expect(galleryEditor.locator(".admin-editor-footer > span")).toHaveText("已发布");
-    await expect.poll(() => page.evaluate(() => localStorage.getItem("nextalex-admin-published-gallery"))).toContain("抽象几何");
+    await expect(page.locator(".admin-module-grid")).toBeVisible();
 
     await page.goto("/");
     await page.locator(".main-nav").getByRole("tab", { name: "创作图库", exact: true }).click();
     await expect(page.locator(".gallery-card").filter({ hasText: "抽象几何" })).toBeVisible();
-    await expect(page.locator(".gallery-card").filter({ hasText: "抽象几何" }).locator("img")).toHaveAttribute("src", /^data:image\/png;base64,/);
+    await expect(page.locator(".gallery-card").filter({ hasText: "抽象几何" }).locator("img")).toHaveAttribute("src", galleryRecord.image);
 
     await page.goto("/admin");
     let syncRequestCount = 0;
@@ -307,6 +344,16 @@ test.describe("页面切换和弹窗交互", () => {
   });
 
   test("创作弹窗将 Tab 留在弹窗内并在 Escape 后还原触发按钮", async ({ page }) => {
+    await page.route("**/api/gallery", async (route) => {
+      await route.fulfill({ contentType: "application/json", body: JSON.stringify([{
+        id: 1,
+        title: "测试作品",
+        image: "https://oss.example.com/gallery/test.png",
+        model: "测试模型",
+        prompt: "测试提示词",
+        createdAt: "2026-08-19T00:00:00Z",
+      }]) });
+    });
     await page.goto("/");
 
     await page.locator(".main-nav").getByRole("tab", { name: "创作图库", exact: true }).click();
