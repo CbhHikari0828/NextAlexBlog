@@ -494,9 +494,40 @@ html[data-page-transition="running"] .page-stage, html.view-transitions-enabled 
 .guestbook-grid-background { position: absolute; z-index: 0; inset: 0; background-image: linear-gradient(to right, #e2e8f0 1px, transparent 1px), linear-gradient(to bottom, #e2e8f0 1px, transparent 1px); background-size: 20px 30px; -webkit-mask-image: radial-gradient(ellipse 70% 60% at 50% 0%, #000 60%, transparent 100%); mask-image: radial-gradient(ellipse 70% 60% at 50% 0%, #000 60%, transparent 100%); }
 .guestbook-wall { position: relative; z-index: 1; padding-bottom: 0; }
 .guestbook-canvas { position: relative; min-height: calc(100svh - 82px); padding-top: 82px; background: transparent; }
-.guestbook-editor { width: min(100% - 96px, 760px); margin: 0 auto; padding: 88px 0 108px; }
-.guestbook-editor-form { padding: 30px; border: 1px solid #dce1d9; background: var(--theme-surface-strong); }
-.guestbook-editor-form h2 { margin-bottom: 22px; font-size: 1.8rem; }
+.guestbook-editor { width: min(100% - 96px, 760px); display: grid; margin: 0 auto; padding: 88px 0 108px; place-items: center; }
+.guestbook-submit-form { --guestbook-form-purple: #6041bf; --guestbook-form-border: #24135a; position: relative; display: flex; width: min(100%, 22em); min-height: 27em; flex-direction: column; align-items: center; overflow: hidden; border: 2px solid var(--guestbook-form-border); border-top-right-radius: 1.5em; border-bottom-left-radius: 1.5em; background-color: #ffffff; box-shadow: -10px 0 0 var(--guestbook-form-border), -10px 5px 5px rgba(0, 0, 0, .2); transition: all .25s ease; }
+.guestbook-submit-form:hover { width: min(100%, 22.6em); min-height: 27.5em; }
+.guestbook-submit-heading, .guestbook-submit-name, .guestbook-submit-message, .guestbook-submit-footer { position: relative; z-index: 2; }
+.guestbook-submit-heading { display: flex; width: 100%; height: 4em; align-items: center; justify-content: space-between; padding: 0 2.2em 0 1.3em; color: #ffffff; background: var(--guestbook-form-purple); }
+.guestbook-submit-heading p { margin: 0; font-size: 1.5em; font-weight: 800; }
+.guestbook-submit-heading span { align-self: flex-end; margin-bottom: .75em; color: rgba(255,255,255,.76); font-size: .7em; font-weight: 800; }
+.guestbook-submit-name, .guestbook-submit-message { display: flex; width: 100%; padding: 0 10%; flex-direction: column; justify-content: center; transition: all .25s ease; }
+.guestbook-submit-name { height: 5.5em; margin-top: 1em; }
+.guestbook-submit-message { height: 8.2em; justify-content: flex-start; }
+.guestbook-submit-name input, .guestbook-submit-message textarea { display: block; width: 100%; border: 2px solid var(--guestbook-form-purple); border-radius: .5em; outline: 0; color: #2c1e54; background-color: #ffffff; box-shadow: 0 5px 5px -3px rgba(0, 0, 0, .2); font-size: .95em; font-weight: 600; transition: all .5s ease; }
+.guestbook-submit-name input { height: 2.5em; padding-left: 1em; }
+.guestbook-submit-message textarea { height: 6.1em; padding: .75em 1em; line-height: 1.45; resize: none; }
+.guestbook-submit-name input::placeholder, .guestbook-submit-message textarea::placeholder { color: var(--guestbook-form-purple); font-weight: 800; opacity: 1; }
+.guestbook-submit-footer { display: flex; width: 100%; min-height: 5.3em; padding: 0 10%; align-items: center; justify-content: space-between; gap: .8em; color: var(--guestbook-form-purple); transition: all .25s ease; }
+.guestbook-submit-colors { display: flex; align-items: center; gap: 7px; }
+.guestbook-submit-color { width: 17px; height: 17px; padding: 0; border: 2px solid transparent; border-radius: 50%; box-shadow: inset 0 0 0 1px rgba(36, 19, 90, .18); transition: transform .2s ease, box-shadow .2s ease; }
+.guestbook-submit-color:hover { transform: scale(1.12); }
+.guestbook-submit-color.selected { border-color: #ffffff; box-shadow: 0 0 0 2px var(--guestbook-form-purple); }
+.guestbook-submit-color-ice { background: #bfdbfe; }
+.guestbook-submit-color-mint { background: #a7f3d0; }
+.guestbook-submit-color-lavender { background: #ddd6fe; }
+.guestbook-submit-color-rose { background: #fecdd3; }
+.guestbook-submit-footer > button { height: 2.5em; padding: 0 1em; border: 2px solid var(--guestbook-form-purple); border-radius: .5em; color: #ffffff; background-color: var(--guestbook-form-purple); box-shadow: 0 5px 5px -3px rgba(0, 0, 0, .2); font-size: .9em; font-weight: 800; transition: all .25s ease; white-space: nowrap; }
+.guestbook-submit-footer > button:active { width: 90%; color: var(--guestbook-form-purple); background-color: #ffffff; }
+.guestbook-submit-background { position: absolute; z-index: 1; top: 0; width: 100%; height: 4em; background-color: var(--guestbook-form-purple); box-shadow: inset 5px 0 var(--guestbook-form-border); transition: all .5s ease; }
+.guestbook-submit-white-filter { position: absolute; z-index: 2; top: 2.5px; right: 2.5px; width: 3.5em; height: 3.5em; border-top-right-radius: 1.25em; box-shadow: 35px -35px 0 -1px #ffffff; pointer-events: none; }
+.guestbook-submit-name:hover, .guestbook-submit-name:focus-within, .guestbook-submit-message:hover, .guestbook-submit-message:focus-within, .guestbook-submit-footer:hover, .guestbook-submit-footer:focus-within { padding-right: 5%; padding-left: 5%; }
+.guestbook-submit-name:hover ~ .guestbook-submit-background, .guestbook-submit-name:focus-within ~ .guestbook-submit-background { height: 4.9em; transform: translateY(5em); }
+.guestbook-submit-message:hover ~ .guestbook-submit-background, .guestbook-submit-message:focus-within ~ .guestbook-submit-background { height: 8em; transform: translateY(10.4em); }
+.guestbook-submit-footer:hover ~ .guestbook-submit-background, .guestbook-submit-footer:focus-within ~ .guestbook-submit-background { height: 6em; transform: translateY(18.5em); }
+.guestbook-submit-name:hover input, .guestbook-submit-name:focus-within input, .guestbook-submit-message:hover textarea, .guestbook-submit-message:focus-within textarea { border-color: #ffffff; color: #ffffff; background-color: var(--guestbook-form-purple); }
+.guestbook-submit-name:hover input::placeholder, .guestbook-submit-name:focus-within input::placeholder, .guestbook-submit-message:hover textarea::placeholder, .guestbook-submit-message:focus-within textarea::placeholder { color: #ffffff; }
+.guestbook-submit-footer:hover > button, .guestbook-submit-footer:focus-within > button { height: 3em; border-color: #ffffff; }
 .guestbook-wall-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 30px; margin-bottom: 34px; }
 .guestbook-wall-head h2 { margin: 0 0 10px; font-family: Georgia, serif; font-size: 2.4rem; font-weight: 400; }
 .guestbook-wall-head p:last-child { margin: 0; color: #74807a; font-size: .9rem; }
