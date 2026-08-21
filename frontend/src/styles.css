@@ -782,6 +782,9 @@ html[data-page-transition="running"] .page-stage, html.view-transitions-enabled 
 .admin-editor-toolbar { display: flex; align-items: center; gap: 4px; border-bottom: 1px solid #dce3e9; }
 .admin-editor-toolbar button { min-height: 38px; display: inline-flex; align-items: center; gap: 7px; padding: 0 12px; border: 0; border-bottom: 2px solid transparent; color: #6a7781; background: transparent; font-size: .82rem; font-weight: 800; }
 .admin-editor-toolbar button.active { border-bottom-color: #1f6f5b; color: #17202a; }
+.admin-markdown-import { position: relative; min-height: 38px; display: inline-flex; align-items: center; gap: 7px; margin-left: auto; padding: 0 12px; border: 1px solid #d8e0e7; border-radius: 7px; color: #4f5d68; background: #ffffff; font-size: .82rem; font-weight: 800; cursor: pointer; }
+.admin-markdown-import:hover { border-color: #9ba9b5; color: #17202a; background: #fbfcfd; }
+.admin-markdown-import input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
 .admin-markdown-source, .admin-markdown-preview { width: 100%; min-height: 520px; margin: 0; border: 1px solid #d8e0e7; border-radius: 8px; color: #17202a; background: #ffffff; font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; font-size: .92rem; line-height: 1.7; }
 .admin-markdown-source { padding: 16px; outline: 0; resize: vertical; }
 .admin-markdown-source:focus { border-color: #1f6f5b; box-shadow: 0 0 0 3px rgba(31, 111, 91, .12); }

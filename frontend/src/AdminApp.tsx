@@ -161,6 +161,37 @@ function savePublishedRecord(key: string, record: Record<string, unknown>) {
   }
 }
 
+function parseMarkdownImport(source: string, filename: string, current: MarkdownDraft): MarkdownDraft {
+  let body = source.replace(/^\uFEFF/, "").replace(/\r\n?/g, "\n").trim();
+  const metadata: Record<string, string> = {};
+  const frontMatter = body.match(/^---\n([\s\S]*?)\n---\n?/);
+
+  if (frontMatter) {
+    for (const line of frontMatter[1].split("\n")) {
+      const match = line.match(/^([A-Za-z][\w-]*)\s*:\s*(.*)$/);
+      if (!match) continue;
+      metadata[match[1].toLowerCase()] = match[2].trim().replace(/^['"]|['"]$/g, "");
+    }
+    body = body.slice(frontMatter[0].length).trim();
+  }
+
+  const heading = body.match(/^#\s+(.+?)\s*(?:\n|$)/);
+  const title = metadata.title || heading?.[1]?.trim() || filename.replace(/\.(?:md|markdown)$/i, "").replace(/[-_]+/g, " ");
+  if (!metadata.title && heading) body = body.slice(heading[0].length).trim();
+  const tags = metadata.tags || metadata.tag || current.tags;
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(metadata.date || "") ? metadata.date : current.date;
+
+  return {
+    ...current,
+    title,
+    category: metadata.category || metadata.series || current.category,
+    tags: Array.isArray(tags) ? tags.join(", ") : tags,
+    summary: metadata.summary || metadata.description || current.summary,
+    date,
+    content: body,
+  };
+}
+
 function AdminApp() {
   const [activeSection, setActiveSection] = useState<AdminSection>("总览");
 
@@ -210,6 +241,25 @@ function MarkdownEditor({ config, back }: { config: MarkdownEditorConfig; back: 
     setDraft({ ...draft, [key]: value });
   }
 
+  async function importMarkdown(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    if (!/\.(md|markdown)$/i.test(file.name)) {
+      setSaveState("请选择 Markdown 文件");
+      return;
+    }
+    try {
+      const imported = parseMarkdownImport(await file.text(), file.name, draft);
+      if (!imported.content.trim()) throw new Error("empty markdown");
+      setDraft(imported);
+      setEditorMode("write");
+      setSaveState(`已导入 ${file.name}`);
+    } catch {
+      setSaveState("Markdown 文件读取失败");
+    }
+  }
+
   async function persist(status: "draft" | "published") {
     if (!draft.title.trim() || !draft.content.trim()) {
       setSaveState("请填写标题和正文");
@@ -256,7 +306,7 @@ function MarkdownEditor({ config, back }: { config: MarkdownEditorConfig; back: 
         {config.showDate ? <label>日期<input type="date" value={draft.date} onChange={(event) => updateDraft("date", event.target.value)} required /></label> : <label>标签<input value={draft.tags} onChange={(event) => updateDraft("tags", event.target.value)} /></label>}
       </div>
       {config.showSummary && <label className="admin-summary-field">摘要<textarea value={draft.summary} onChange={(event) => updateDraft("summary", event.target.value)} rows={3} /></label>}
-      <div className="admin-editor-toolbar" role="tablist" aria-label="正文模式"><button className={editorMode === "write" ? "active" : ""} type="button" role="tab" aria-selected={editorMode === "write"} onClick={() => setEditorMode("write")}>撰写</button><button className={editorMode === "preview" ? "active" : ""} type="button" role="tab" aria-selected={editorMode === "preview"} onClick={() => setEditorMode("preview")}><Eye size={16} aria-hidden="true" />预览</button></div>
+      <div className="admin-editor-toolbar" role="tablist" aria-label="正文模式"><button className={editorMode === "write" ? "active" : ""} type="button" role="tab" aria-selected={editorMode === "write"} onClick={() => setEditorMode("write")}>撰写</button><button className={editorMode === "preview" ? "active" : ""} type="button" role="tab" aria-selected={editorMode === "preview"} onClick={() => setEditorMode("preview")}><Eye size={16} aria-hidden="true" />预览</button><label className="admin-markdown-import"><Upload size={16} aria-hidden="true" />导入 Markdown<input type="file" accept=".md,.markdown,text/markdown" onChange={importMarkdown} /></label></div>
       {editorMode === "write" ? <textarea className="admin-markdown-source" aria-label="正文 Markdown" value={draft.content} onChange={(event) => updateDraft("content", event.target.value)} spellCheck={false} required /> : <article className="admin-markdown-preview markdown-content" aria-label="正文预览"><ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>{draft.content || "# "}</ReactMarkdown></article>}
       <EditorFooter saveState={saveState} saveDraft={() => { void persist("draft"); }} />
     </form>
