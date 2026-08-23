@@ -42,3 +42,7 @@ Article details, creation metadata, authentication, and guestbook persistence ar
 The PostgreSQL service is available to the host backend at `localhost:55432` by default. Set `POSTGRES_PORT` and the matching `DATABASE_URL` in `.env` to use another port. Before starting containers, verify the selected host port is free; do not stop unrelated services to reclaim it. The default development connection string is in `.env.example`.
 
 Database initialization scripts run only when PostgreSQL creates a fresh data volume. Existing data is kept in the named `postgres_data` volume.
+
+## Current status
+
+The project currently includes Markdown article import in the admin editor and Alibaba Cloud OSS-backed image storage for the creation gallery. Gallery uploads are published for browser access, while metadata remains in PostgreSQL.

@@ -404,10 +404,29 @@ func (storage *ossGalleryImageStorage) Upload(_ context.Context, extension strin
 		return uploadedGalleryImage{}, fmt.Errorf("generate gallery image key: %w", err)
 	}
 	key := path.Join("gallery", time.Now().UTC().Format("2006/01"), fmt.Sprintf("%d-%x%s", time.Now().UTC().UnixNano(), randomBytes, extension))
-	if err := storage.bucket.PutObject(key, bytes.NewReader(data), oss.ContentType(contentType)); err != nil {
+	if err := storage.bucket.PutObject(key, bytes.NewReader(data), oss.ContentType(contentType), oss.ObjectACL(oss.ACLPublicRead)); err != nil {
 		return uploadedGalleryImage{}, fmt.Errorf("upload gallery image to OSS: %w", err)
 	}
 	return uploadedGalleryImage{URL: storage.objectURL(key), Key: key}, nil
+}
+
+// repairPublicReadACL makes existing gallery records usable after the bucket
+// was initially configured with private object ACLs.
+func (storage *ossGalleryImageStorage) repairPublicReadACL(ctx context.Context, store galleryCreationStore) error {
+	creations, err := store.ListGalleryCreations(ctx)
+	if err != nil {
+		return fmt.Errorf("list gallery images for ACL repair: %w", err)
+	}
+	for _, creation := range creations {
+		key, ok := storage.objectKey(creation.ImageURL)
+		if !ok {
+			continue
+		}
+		if err := storage.bucket.SetObjectACL(key, oss.ACLPublicRead); err != nil {
+			return fmt.Errorf("set public ACL for %s: %w", key, err)
+		}
+	}
+	return nil
 }
 
 func (storage *ossGalleryImageStorage) Delete(_ context.Context, key string) error {
@@ -418,19 +437,27 @@ func (storage *ossGalleryImageStorage) Delete(_ context.Context, key string) err
 }
 
 func (storage *ossGalleryImageStorage) DeleteURL(ctx context.Context, rawURL string) error {
-	parsed, err := url.Parse(strings.TrimSpace(rawURL))
-	if err != nil || parsed.Hostname() == "" {
-		return nil
-	}
-	key := strings.TrimPrefix(parsed.Path, "/")
-	if !strings.HasPrefix(key, "gallery/") {
-		return nil
-	}
-	key, err = url.PathUnescape(key)
-	if err != nil {
+	key, ok := storage.objectKey(rawURL)
+	if !ok {
 		return nil
 	}
 	return storage.Delete(ctx, key)
+}
+
+func (storage *ossGalleryImageStorage) objectKey(rawURL string) (string, bool) {
+	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil || parsed.Hostname() == "" {
+		return "", false
+	}
+	key := strings.TrimPrefix(parsed.Path, "/")
+	if !strings.HasPrefix(key, "gallery/") {
+		return "", false
+	}
+	key, err = url.PathUnescape(key)
+	if err != nil {
+		return "", false
+	}
+	return key, true
 }
 
 func (storage *ossGalleryImageStorage) objectURL(key string) string {
@@ -673,6 +700,13 @@ func main() {
 	router.POST("/api/admin/music/import", musicImportHandler(musicClient, musicStore))
 	router.DELETE("/api/admin/music/:id", musicDeleteHandler(musicStore))
 	galleryStore := postgresGalleryCreationStore{pool: pool}
+	if storage, ok := galleryStorage.(*ossGalleryImageStorage); ok {
+		repairContext, repairCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		if repairErr := storage.repairPublicReadACL(repairContext, galleryStore); repairErr != nil {
+			log.Printf("repair gallery image ACLs: %v", repairErr)
+		}
+		repairCancel()
+	}
 	router.GET("/api/gallery", galleryCreationsHandler(galleryStore))
 	router.POST("/api/admin/gallery", galleryCreationImportHandler(galleryStorage, galleryStore))
 	router.PUT("/api/admin/gallery/:id", galleryCreationUpdateHandler(galleryStorage, galleryStore))
