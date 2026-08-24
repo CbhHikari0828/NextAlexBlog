@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@gsap/react": "^2.1.2",
+    "@react-three/fiber": "^9.7.0",
     "@vitejs/plugin-react": "latest",
     "gsap": "^3.15.0",
     "lucide-react": "^1.31.0",
@@ -19,13 +20,15 @@
     "react-dom": "latest",
     "react-markdown": "^10.1.0",
     "rehype-highlight": "^7.0.2",
-    "remark-gfm": "^4.0.1"
+    "remark-gfm": "^4.0.1",
+    "three": "^0.185.1"
   },
   "devDependencies": {
     "@playwright/test": "^1.62.1",
     "@types/node": "latest",
     "@types/react": "latest",
     "@types/react-dom": "latest",
+    "@types/three": "^0.185.4",
     "typescript": "latest",
     "vite": "latest"
   }

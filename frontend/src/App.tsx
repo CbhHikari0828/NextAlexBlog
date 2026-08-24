@@ -1,5 +1,5 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { PointerEvent as ReactPointerEvent, ReactNode } from "react";
+import type { CSSProperties, PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import { useGSAP } from "@gsap/react";
 import { gsap } from "gsap";
 import { ScrollTrigger } from "gsap/ScrollTrigger";
@@ -9,6 +9,7 @@ import ReactMarkdown from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
 import AdminApp from "./AdminApp";
+import HomeDropScene from "./components/HomeDropScene";
 
 gsap.registerPlugin(useGSAP, ScrollTrigger);
 
@@ -977,6 +978,15 @@ function Home({ navigate, setSelectedArticle, repositories, repositoryState }: {
     article,
     headline: ["并发秩序", "线程池生命周期", "异步编排", "Redis 锁边界", "集合取舍"][index] ?? article.series,
   }));
+  const impactPixels = useMemo(() => Array.from({ length: 46 }, (_, index) => {
+    const angle = (index / 46) * Math.PI * 2;
+    const distance = 58 + (index % 8) * 17;
+    return {
+      x: Math.round(Math.cos(angle) * distance),
+      y: Math.round(Math.sin(angle) * distance * 0.54 + ((index % 3) - 1) * 14),
+      size: 4 + (index % 4) * 2,
+    };
+  }), []);
   const homeRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -1004,6 +1014,10 @@ function Home({ navigate, setSelectedArticle, repositories, repositoryState }: {
     const articleHoverBg = root.querySelector<HTMLElement>(".home-article-hover-bg");
     const articleCursor = root.querySelector<HTMLElement>(".home-article-cursor");
     const articleRows = Array.from(root.querySelectorAll<HTMLElement>(".home-article-system-row"));
+    const dropScene = root.querySelector<HTMLElement>(".home-drop-scene");
+    const dropObject = root.querySelector<HTMLElement>(".home-drop-object");
+    const articleSystems = root.querySelector<HTMLElement>(".home-article-systems");
+    const impactPixelElements = Array.from(root.querySelectorAll<HTMLElement>(".home-impact-pixel"));
     const lowerPanels = Array.from(root.querySelectorAll<HTMLElement>(".home-lower > *"));
     const lowerSection = root.querySelector<HTMLElement>(".home-lower");
     const media = gsap.matchMedia();
@@ -1081,6 +1095,54 @@ function Home({ navigate, setSelectedArticle, repositories, repositoryState }: {
         cleanup.push(() => articleSystemInner.removeEventListener("pointerenter", showCursor));
         cleanup.push(() => articleSystemInner.removeEventListener("pointermove", moveCursor));
         cleanup.push(() => articleSystemInner.removeEventListener("pointerleave", clearActiveRow));
+      }
+
+      if (dropScene && dropObject && articleSystems && impactPixelElements.length > 0) {
+        let impacted = false;
+        gsap.set(dropObject, { autoAlpha: 1, y: -130, scale: 0.82, rotation: -8 });
+        gsap.set(impactPixelElements, { autoAlpha: 0, x: 0, y: 0, scale: 0, rotation: 0 });
+
+        const resetImpact = () => {
+          impacted = false;
+          articleSystems.classList.remove("is-impacting");
+          gsap.set(dropObject, { autoAlpha: 1, scale: 0.82 });
+          gsap.set(impactPixelElements, { autoAlpha: 0, x: 0, y: 0, scale: 0, rotation: 0 });
+        };
+
+        const triggerImpact = () => {
+          if (impacted) return;
+          impacted = true;
+          articleSystems.classList.add("is-impacting");
+          gsap.fromTo(dropObject, { scale: 1.08 }, { autoAlpha: 0.24, scale: 0.68, y: "+=42", duration: 0.42, ease: "power3.out", overwrite: "auto" });
+          gsap.fromTo(articleSystems, { y: 16 }, { y: 0, duration: 0.58, ease: "elastic.out(1, 0.52)", overwrite: "auto" });
+          gsap.fromTo(articleRows, { y: (index) => index % 2 === 0 ? 10 : -8 }, { y: 0, duration: 0.56, ease: "elastic.out(1, 0.62)", stagger: 0.025, clearProps: "transform" });
+          gsap.fromTo(impactPixelElements, { autoAlpha: 1, x: 0, y: 0, scale: 0.2, rotation: 0 }, {
+            autoAlpha: 0,
+            x: (_, target) => Number((target as HTMLElement).dataset.impactX || 0),
+            y: (_, target) => Number((target as HTMLElement).dataset.impactY || 0),
+            scale: (_, target) => Number((target as HTMLElement).dataset.impactScale || 1),
+            rotation: (_, target) => Number((target as HTMLElement).dataset.impactRotation || 0),
+            duration: 0.78,
+            ease: "power3.out",
+            stagger: { amount: 0.16, from: "center" },
+            overwrite: "auto",
+          });
+        };
+
+        gsap.timeline({
+          scrollTrigger: {
+            trigger: dropScene,
+            start: "top 78%",
+            end: "bottom 42%",
+            scrub: 0.7,
+            onUpdate: (self) => {
+              if (self.progress > 0.88) triggerImpact();
+              if (self.progress < 0.18 && impacted) resetImpact();
+            },
+          },
+        }).to(dropObject, { y: () => Math.max(320, dropScene.offsetHeight - 172), scale: 1.08, rotation: 12, ease: "none" });
+
+        cleanup.push(() => gsap.killTweensOf([dropObject, articleSystems, ...articleRows, ...impactPixelElements]));
       }
 
       recentItems.forEach((item) => {
@@ -1161,7 +1223,14 @@ function Home({ navigate, setSelectedArticle, repositories, repositoryState }: {
           </div>
         </div>
       </section>
+      <section className="home-drop-scene" aria-hidden="true">
+        <div className="home-drop-track home-content">
+          <div className="home-drop-object"><HomeDropScene /></div>
+          <div className="home-drop-target" />
+        </div>
+      </section>
       <section className="recent-section home-article-systems" aria-label="首页文章展示">
+        <div className="home-article-impact-pixels" aria-hidden="true">{impactPixels.map((pixel, index) => <span className={`home-impact-pixel home-impact-pixel-${index % 3}`} key={index} data-impact-x={pixel.x} data-impact-y={pixel.y} data-impact-scale={(0.8 + (index % 5) * 0.18).toFixed(2)} data-impact-rotation={(index % 2 === 0 ? 1 : -1) * (35 + index * 7)} style={{ "--pixel-size": `${pixel.size}px` } as CSSProperties} />)}</div>
         <div className="home-article-systems-inner home-content"><span className="home-article-hover-bg" aria-hidden="true" /><span className="home-article-cursor" aria-hidden="true" />{featuredHomeArticles.map(({ article, headline }, index) => <button className="recent-article home-article-system-row" key={article.title} onClick={() => window.setTimeout(() => setSelectedArticle(article), prefersReducedMotion() ? 0 : 180)}><span className="recent-index">[ {String(index + 1).padStart(2, "0")} ]</span><h2>{headline}</h2><p><strong>{article.title}</strong></p></button>)}</div>
       </section>
       <section className="home-lower home-content">
