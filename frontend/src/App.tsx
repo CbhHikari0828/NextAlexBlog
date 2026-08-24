@@ -978,13 +978,25 @@ function Home({ navigate, setSelectedArticle, repositories, repositoryState }: {
     article,
     headline: ["并发秩序", "线程池生命周期", "异步编排", "Redis 锁边界", "集合取舍"][index] ?? article.series,
   }));
-  const impactPixels = useMemo(() => Array.from({ length: 46 }, (_, index) => {
-    const angle = (index / 46) * Math.PI * 2;
-    const distance = 58 + (index % 8) * 17;
+  const impactPixels = useMemo(() => Array.from({ length: 118 }, (_, index) => {
+    const angle = index * 2.399963 + (index % 7) * 0.08;
+    const isBlob = index % 9 === 0;
+    const isStreak = index % 5 === 0;
+    const distance = isBlob ? 42 + (index % 6) * 16 : 82 + (index % 14) * 18;
+    const baseSize = isBlob ? 18 + (index % 4) * 8 : isStreak ? 9 + (index % 3) * 4 : 6 + (index % 5) * 2;
+    const width = Math.round(isStreak ? baseSize * (2.7 + (index % 4) * 0.34) : isBlob ? baseSize * 1.55 : baseSize * (1 + (index % 3) * 0.18));
+    const height = Math.round(isStreak ? baseSize * 0.74 : isBlob ? baseSize * 1.18 : baseSize * (0.92 + (index % 4) * 0.1));
     return {
-      x: Math.round(Math.cos(angle) * distance),
-      y: Math.round(Math.sin(angle) * distance * 0.54 + ((index % 3) - 1) * 14),
-      size: 4 + (index % 4) * 2,
+      x: Math.round(Math.cos(angle) * distance * (index % 4 === 0 ? 1.62 : 1.18)),
+      y: Math.round(Math.abs(Math.sin(angle)) * distance * 0.66 + (index % 8) * 10 - (index % 6 === 0 ? 48 : 14)),
+      size: baseSize,
+      width,
+      height,
+      radius: isStreak ? "999px" : index % 3 === 0 ? "58% 42% 64% 36% / 44% 60% 40% 56%" : "50%",
+      scale: (isBlob ? 1.75 + (index % 4) * 0.2 : isStreak ? 1.18 + (index % 5) * 0.16 : 0.88 + (index % 6) * 0.18).toFixed(2),
+      rotation: (index % 2 === 0 ? 1 : -1) * (46 + index * 9),
+      delay: (index % 13) * 0.006,
+      duration: (0.82 + (index % 7) * 0.055).toFixed(2),
     };
   }), []);
   const homeRef = useRef<HTMLDivElement>(null);
@@ -1014,9 +1026,11 @@ function Home({ navigate, setSelectedArticle, repositories, repositoryState }: {
     const articleHoverBg = root.querySelector<HTMLElement>(".home-article-hover-bg");
     const articleCursor = root.querySelector<HTMLElement>(".home-article-cursor");
     const articleRows = Array.from(root.querySelectorAll<HTMLElement>(".home-article-system-row"));
-    const dropScene = root.querySelector<HTMLElement>(".home-drop-scene");
+    const dropScene = hero;
     const dropObject = root.querySelector<HTMLElement>(".home-drop-object");
+    const dropVisual = root.querySelector<HTMLElement>(".home-drop-visual") ?? dropObject;
     const articleSystems = root.querySelector<HTMLElement>(".home-article-systems");
+    const impactLayer = root.querySelector<HTMLElement>(".home-article-impact-pixels");
     const impactPixelElements = Array.from(root.querySelectorAll<HTMLElement>(".home-impact-pixel"));
     const lowerPanels = Array.from(root.querySelectorAll<HTMLElement>(".home-lower > *"));
     const lowerSection = root.querySelector<HTMLElement>(".home-lower");
@@ -1097,52 +1111,142 @@ function Home({ navigate, setSelectedArticle, repositories, repositoryState }: {
         cleanup.push(() => articleSystemInner.removeEventListener("pointerleave", clearActiveRow));
       }
 
-      if (dropScene && dropObject && articleSystems && impactPixelElements.length > 0) {
+      if (dropScene && dropObject && dropVisual && articleSystems && impactLayer && impactPixelElements.length > 0) {
         let impacted = false;
-        gsap.set(dropObject, { autoAlpha: 1, y: -130, scale: 0.82, rotation: -8 });
+        const dropStartScale = 1;
+        const dropMinScale = 0.5;
+        const dropMorphStart = 0.38;
+        const dropMorphEnd = 0.64;
+        let dropArticleStartTop = 1;
+        let dropArticleImpactTop = 1;
+        let dropTravelDistance = 1;
+        let dropBaseHeight = 1;
+        let currentDropScale = dropStartScale;
+        gsap.set(dropVisual, { xPercent: -50, yPercent: -50, autoAlpha: 1, y: 0, scale: 1, rotation: -6 });
+        dropVisual.style.setProperty("--drop-visual-scale", String(dropStartScale));
+        dropVisual.style.setProperty("--drop-cube-progress", "0");
+        gsap.set(impactLayer, { x: 0, y: 0 });
         gsap.set(impactPixelElements, { autoAlpha: 0, x: 0, y: 0, scale: 0, rotation: 0 });
+
+        const measureDropTravel = () => {
+          const ballRect = dropVisual.getBoundingClientRect();
+          const articleRect = articleSystems.getBoundingClientRect();
+          dropBaseHeight = Math.max(1, ballRect.height);
+          dropArticleStartTop = articleRect.top + window.scrollY;
+          dropArticleImpactTop = ballRect.top + ballRect.height / 2 + (dropBaseHeight * dropMinScale) / 2;
+          dropTravelDistance = Math.max(1, dropArticleStartTop - dropArticleImpactTop);
+        };
+
+        const getDropScaleForArticleTop = (articleTop: number) => {
+          const travelProgress = gsap.utils.clamp(0, 1, (dropArticleStartTop - articleTop) / dropTravelDistance);
+
+          return gsap.utils.interpolate(dropStartScale, dropMinScale, travelProgress);
+        };
+
+        const syncDropScale = () => {
+          if (impacted) return;
+          const articleRect = articleSystems.getBoundingClientRect();
+          const travelProgress = gsap.utils.clamp(0, 1, (dropArticleStartTop - articleRect.top) / dropTravelDistance);
+          const nextScale = gsap.utils.interpolate(dropStartScale, dropMinScale, travelProgress);
+          const morphProgress = gsap.utils.clamp(0, 1, (travelProgress - dropMorphStart) / (dropMorphEnd - dropMorphStart));
+
+          currentDropScale = nextScale;
+          dropVisual.style.setProperty("--drop-visual-scale", String(nextScale));
+          dropVisual.style.setProperty("--drop-cube-progress", String(morphProgress));
+        };
+
+        measureDropTravel();
+
+        const getVirtualDropRect = () => {
+          const visualRect = dropVisual.getBoundingClientRect();
+          const centerX = visualRect.left + visualRect.width / 2;
+          const centerY = visualRect.top + visualRect.height / 2;
+          const width = visualRect.width * currentDropScale;
+          const height = visualRect.height * currentDropScale;
+
+          return {
+            left: centerX - width / 2,
+            top: centerY - height / 2,
+            width,
+            height,
+            right: centerX + width / 2,
+            bottom: centerY + height / 2,
+          };
+        };
+
+        const hasVisuallyHitArticle = () => {
+          const ballRect = getVirtualDropRect();
+          const articleRect = articleSystems.getBoundingClientRect();
+
+          return ballRect.bottom >= articleRect.top - 4;
+        };
+
+        const hasClearedRestoredBall = () => {
+          const articleRect = articleSystems.getBoundingClientRect();
+          const pinRect = dropObject.getBoundingClientRect();
+          const restoredScale = getDropScaleForArticleTop(articleRect.top);
+          const restoredBottom = pinRect.top + pinRect.height / 2 + (dropBaseHeight * restoredScale) / 2;
+
+          return articleRect.top > restoredBottom + 12;
+        };
+
+        const syncImpactOrigin = () => {
+          const ballRect = getVirtualDropRect();
+          const layerRect = impactLayer.getBoundingClientRect();
+          const impactX = ballRect.left + ballRect.width / 2 - layerRect.left;
+          const impactY = Math.max(0, Math.min(120, ballRect.bottom - layerRect.top));
+
+          gsap.set(impactLayer, { x: impactX, y: impactY });
+        };
 
         const resetImpact = () => {
           impacted = false;
           articleSystems.classList.remove("is-impacting");
-          gsap.set(dropObject, { autoAlpha: 1, scale: 0.82 });
+          gsap.killTweensOf([dropVisual, impactPixelElements]);
+          gsap.set(dropVisual, { xPercent: -50, yPercent: -50, autoAlpha: 1, y: 0, scale: 1, rotation: -6 });
+          syncDropScale();
+          gsap.set(impactLayer, { x: 0, y: 0 });
           gsap.set(impactPixelElements, { autoAlpha: 0, x: 0, y: 0, scale: 0, rotation: 0 });
         };
 
         const triggerImpact = () => {
           if (impacted) return;
           impacted = true;
+          syncImpactOrigin();
           articleSystems.classList.add("is-impacting");
-          gsap.fromTo(dropObject, { scale: 1.08 }, { autoAlpha: 0.24, scale: 0.68, y: "+=42", duration: 0.42, ease: "power3.out", overwrite: "auto" });
-          gsap.fromTo(articleSystems, { y: 16 }, { y: 0, duration: 0.58, ease: "elastic.out(1, 0.52)", overwrite: "auto" });
-          gsap.fromTo(articleRows, { y: (index) => index % 2 === 0 ? 10 : -8 }, { y: 0, duration: 0.56, ease: "elastic.out(1, 0.62)", stagger: 0.025, clearProps: "transform" });
-          gsap.fromTo(impactPixelElements, { autoAlpha: 1, x: 0, y: 0, scale: 0.2, rotation: 0 }, {
+          gsap.timeline({ defaults: { overwrite: "auto" } })
+            .to(dropVisual, { scale: 0.64, rotation: "+=18", duration: 0.08, ease: "power3.out" })
+            .to(dropVisual, { autoAlpha: 0, scale: 0.04, y: "+=34", rotation: "+=52", duration: 0.2, ease: "power4.in" }, 0.04);
+          gsap.fromTo(articleSystems, { y: 34, scaleY: 0.982 }, { y: 0, scaleY: 1, duration: 0.72, ease: "elastic.out(1, 0.42)", overwrite: "auto" });
+          gsap.fromTo(articleRows, { y: (index) => index % 2 === 0 ? 18 : -14, scaleX: 0.992 }, { y: 0, scaleX: 1, duration: 0.66, ease: "elastic.out(1, 0.56)", stagger: 0.028, clearProps: "transform" });
+          gsap.fromTo(impactPixelElements, { autoAlpha: 1, x: 0, y: 0, scale: 0.08, rotation: 0 }, {
             autoAlpha: 0,
             x: (_, target) => Number((target as HTMLElement).dataset.impactX || 0),
             y: (_, target) => Number((target as HTMLElement).dataset.impactY || 0),
             scale: (_, target) => Number((target as HTMLElement).dataset.impactScale || 1),
             rotation: (_, target) => Number((target as HTMLElement).dataset.impactRotation || 0),
-            duration: 0.78,
-            ease: "power3.out",
-            stagger: { amount: 0.16, from: "center" },
+            duration: (_, target) => Number((target as HTMLElement).dataset.impactDuration || 0.96),
+            delay: (_, target) => Number((target as HTMLElement).dataset.impactDelay || 0),
+            ease: "power4.out",
+            stagger: { amount: 0.22, from: "center" },
             overwrite: "auto",
           });
         };
 
-        gsap.timeline({
-          scrollTrigger: {
-            trigger: dropScene,
-            start: "top 78%",
-            end: "bottom 42%",
-            scrub: 0.7,
-            onUpdate: (self) => {
-              if (self.progress > 0.88) triggerImpact();
-              if (self.progress < 0.18 && impacted) resetImpact();
-            },
+        const dropImpactTrigger = ScrollTrigger.create({
+          trigger: dropScene,
+          start: "top top",
+          end: "bottom top",
+          onRefresh: measureDropTravel,
+          onUpdate: (self) => {
+            if (impacted && (self.progress < 0.05 || hasClearedRestoredBall())) resetImpact();
+            syncDropScale();
+            if (!impacted && hasVisuallyHitArticle() && self.progress > 0.08) triggerImpact();
           },
-        }).to(dropObject, { y: () => Math.max(320, dropScene.offsetHeight - 172), scale: 1.08, rotation: 12, ease: "none" });
+        });
 
-        cleanup.push(() => gsap.killTweensOf([dropObject, articleSystems, ...articleRows, ...impactPixelElements]));
+        cleanup.push(() => dropImpactTrigger.kill());
+        cleanup.push(() => gsap.killTweensOf([dropVisual, articleSystems, ...articleRows, ...impactPixelElements]));
       }
 
       recentItems.forEach((item) => {
@@ -1180,7 +1284,7 @@ function Home({ navigate, setSelectedArticle, repositories, repositoryState }: {
     });
 
     media.add("(min-width: 769px) and (prefers-reduced-motion: no-preference)", () => {
-      if (!background || !hero || !heroContent) return;
+      if (!background || !hero) return;
 
       gsap.timeline({
         scrollTrigger: {
@@ -1190,9 +1294,7 @@ function Home({ navigate, setSelectedArticle, repositories, repositoryState }: {
           scrub: 0.7,
         },
       })
-        .to(background, { autoAlpha: 0.16, scale: 1.07, filter: "blur(7px)", ease: "none" }, 0)
-        .to(heroContent, { autoAlpha: 0, y: -46, ease: "none" }, 0)
-        .to(avatar, { scale: 0.92, ease: "none" }, 0);
+        .to(background, { autoAlpha: 0.16, scale: 1.07, filter: "blur(7px)", ease: "none" }, 0);
     });
 
     return () => media.revert();
@@ -1221,16 +1323,11 @@ function Home({ navigate, setSelectedArticle, repositories, repositoryState }: {
               </div>
             </div>
           </div>
-        </div>
-      </section>
-      <section className="home-drop-scene" aria-hidden="true">
-        <div className="home-drop-track home-content">
-          <div className="home-drop-object"><HomeDropScene /></div>
-          <div className="home-drop-target" />
+          <div className="home-drop-object" aria-hidden="true"><div className="home-drop-visual"><HomeDropScene /></div></div>
         </div>
       </section>
       <section className="recent-section home-article-systems" aria-label="首页文章展示">
-        <div className="home-article-impact-pixels" aria-hidden="true">{impactPixels.map((pixel, index) => <span className={`home-impact-pixel home-impact-pixel-${index % 3}`} key={index} data-impact-x={pixel.x} data-impact-y={pixel.y} data-impact-scale={(0.8 + (index % 5) * 0.18).toFixed(2)} data-impact-rotation={(index % 2 === 0 ? 1 : -1) * (35 + index * 7)} style={{ "--pixel-size": `${pixel.size}px` } as CSSProperties} />)}</div>
+        <div className="home-article-impact-pixels" aria-hidden="true">{impactPixels.map((pixel, index) => <span className={`home-impact-pixel home-impact-pixel-${index % 6}`} key={index} data-impact-x={pixel.x} data-impact-y={pixel.y} data-impact-scale={pixel.scale} data-impact-rotation={pixel.rotation} data-impact-delay={pixel.delay} data-impact-duration={pixel.duration} style={{ "--pixel-size": `${pixel.size}px`, "--pixel-width": `${pixel.width}px`, "--pixel-height": `${pixel.height}px`, "--pixel-radius": pixel.radius } as CSSProperties} />)}</div>
         <div className="home-article-systems-inner home-content"><span className="home-article-hover-bg" aria-hidden="true" /><span className="home-article-cursor" aria-hidden="true" />{featuredHomeArticles.map(({ article, headline }, index) => <button className="recent-article home-article-system-row" key={article.title} onClick={() => window.setTimeout(() => setSelectedArticle(article), prefersReducedMotion() ? 0 : 180)}><span className="recent-index">[ {String(index + 1).padStart(2, "0")} ]</span><h2>{headline}</h2><p><strong>{article.title}</strong></p></button>)}</div>
       </section>
       <section className="home-lower home-content">
