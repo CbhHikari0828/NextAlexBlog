@@ -1,12 +1,16 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent, ReactNode } from "react";
-import { flushSync } from "react-dom";
+import { useGSAP } from "@gsap/react";
+import { gsap } from "gsap";
+import { ScrollTrigger } from "gsap/ScrollTrigger";
 import { ArrowUpRight, ChevronDown, ChevronLeft, ChevronRight, Code2, Eye, GitBranch, GitFork, Mail, Rss, Send, Star, Users } from "lucide-react";
 import { motion, useMotionValue, useSpring, useTransform } from "motion/react";
 import ReactMarkdown from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
 import AdminApp from "./AdminApp";
+
+gsap.registerPlugin(useGSAP, ScrollTrigger);
 
 type View = "home" | "articles" | "notes" | "gallery" | "studio" | "entertainment" | "guestbook";
 type ApiState = "checking" | "online" | "offline";
@@ -121,15 +125,6 @@ type ArticleHeading = {
   level: 1 | 2 | 3;
 };
 
-type ViewTransitionDocument = Document & {
-  startViewTransition?: (update: () => void) => ViewTransitionHandle;
-};
-
-type ViewTransitionHandle = {
-  finished: Promise<void>;
-  skipTransition?: () => void;
-};
-
 type Creation = {
   title: string;
   type: string;
@@ -233,8 +228,6 @@ function formatSteamPlaytime(minutes: number) {
 
 const prefersReducedMotion = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 const focusableSelector = "a[href], button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex='-1'])";
-let pageTransitionSequence = 0;
-let activePageTransition: ViewTransitionHandle | null = null;
 
 function trapModalFocus(event: KeyboardEvent, container: HTMLElement) {
   if (event.key !== "Tab") return;
@@ -276,52 +269,7 @@ function hideModalSiblings(modal: HTMLElement) {
 }
 
 function runPageTransition(update: () => void) {
-  const transitionDocument = document as ViewTransitionDocument;
-  if (!transitionDocument.startViewTransition || prefersReducedMotion()) {
-    pageTransitionSequence += 1;
-    activePageTransition?.skipTransition?.();
-    activePageTransition = null;
-    delete document.documentElement.dataset.pageTransition;
-    update();
-    return;
-  }
-
-  const transitionSequence = ++pageTransitionSequence;
-  if (activePageTransition) {
-    activePageTransition.skipTransition?.();
-    activePageTransition = null;
-    delete document.documentElement.dataset.pageTransition;
-    flushSync(update);
-    return;
-  }
-
-  let committed = false;
-  const commit = () => {
-    if (committed || transitionSequence !== pageTransitionSequence) return;
-    committed = true;
-    flushSync(update);
-  };
-
-  document.documentElement.dataset.pageTransition = "running";
-  try {
-    const transition = transitionDocument.startViewTransition(commit);
-    document.documentElement.classList.add("view-transitions-enabled");
-    activePageTransition = transition;
-    void transition.finished.then(
-      () => undefined,
-      () => undefined,
-    ).finally(() => {
-      if (transitionSequence !== pageTransitionSequence) return;
-      activePageTransition = null;
-      delete document.documentElement.dataset.pageTransition;
-    });
-  } catch {
-    if (transitionSequence === pageTransitionSequence) {
-      activePageTransition = null;
-      delete document.documentElement.dataset.pageTransition;
-    }
-    commit();
-  }
+  update();
 }
 
 // Dismissal is delayed only long enough for the exit animation; the ref guard
@@ -622,39 +570,6 @@ const notes: Note[] = [
 ];
 
 const categories = ["全部文章", "Java 并发编程", "JUC 基础", "异步工具箱", "后端实践", "系统设计"];
-
-const articleWeatherLocations = [
-  { city: "Reykjavik, Iceland", temperature: 8, high: 12, low: 4, condition: "Light Rain" },
-  { city: "Kyoto, Japan", temperature: 24, high: 29, low: 18, condition: "Partly Cloudy" },
-  { city: "Lisbon, Portugal", temperature: 22, high: 27, low: 17, condition: "Clear Sky" },
-  { city: "Vancouver, Canada", temperature: 16, high: 19, low: 11, condition: "Mid Rain" },
-  { city: "Queenstown, New Zealand", temperature: 14, high: 18, low: 8, condition: "Cloudy" },
-] as const;
-
-function ArticleWeatherCard() {
-  const weather = useMemo(() => articleWeatherLocations[Math.floor(Math.random() * articleWeatherLocations.length)], []);
-
-  return (
-    <section className="article-weather" aria-label={`随机城市天气：${weather.city}`}>
-      <div className="card">
-        <svg fill="none" viewBox="0 0 342 175" height="175" width="342" xmlns="http://www.w3.org/2000/svg" className="background" aria-hidden="true">
-          <path fill="url(#article-weather-gradient)" d="M0 66.4396C0 31.6455 0 14.2484 11.326 5.24044C22.6519 -3.76754 39.6026 0.147978 73.5041 7.97901L307.903 62.1238C324.259 65.9018 332.436 67.7909 337.218 73.8031C342 79.8154 342 88.2086 342 104.995V131C342 151.742 342 162.113 335.556 168.556C329.113 175 318.742 175 298 175H44C23.2582 175 12.8873 175 6.44365 168.556C0 162.113 0 151.742 0 131V66.4396Z" />
-          <defs><linearGradient gradientUnits="userSpaceOnUse" y2="128" x2="354.142" y1="128" x1="0" id="article-weather-gradient"><stop stopColor="#5936B4" /><stop stopColor="#362A84" offset="1" /></linearGradient></defs>
-        </svg>
-        <div className="cloud" aria-hidden="true">
-          <svg fill="#000000" preserveAspectRatio="xMidYMid meet" className="iconify iconify--emojione" role="img" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-            <g fill="#75d6ff"><path d="M10.8 42.9c-.5 1.5-.1 3 1 3.4c1.1.4 2.4-.5 3-2c.6-1.8.7-4.1.2-6.9c-2.1 1.9-3.6 3.8-4.2 5.5" /><path d="M13.2 57.4c.6-1.8.7-4.1.2-6.9c-2.1 1.8-3.6 3.7-4.2 5.5c-.5 1.5-.1 3 1 3.4c1.1.4 2.5-.5 3-2" /><path d="M51.5 37.4c-2.1 1.8-3.6 3.7-4.2 5.5c-.5 1.5-.1 3 1 3.4c1.1.4 2.4-.5 3-2c.5-1.7.6-4.1.2-6.9" /><path d="M38.2 55.9c-.5 1.5-.1 3 1 3.4s2.4-.5 3-2c.6-1.8.7-4.1.2-6.9c-2 1.9-3.5 3.8-4.2 5.5" /><path d="M46.9 55.9c-.5 1.5-.1 3 1 3.4s2.4-.5 3-2c.6-1.8.7-4.1.2-6.9c-2.1 1.9-3.6 3.8-4.2 5.5" /><path d="M18.6 55.9c-.5 1.5-.1 3 1 3.4s2.4-.5 3-2c.6-1.8.7-4.1.2-6.9c-2.1 1.9-3.6 3.8-4.2 5.5" /></g>
-            <path d="M24.5 31.9l-4.9 16.2h12.5L27.9 62l16.5-20.2H32.5l2.9-9.9z" fill="#ffce31" />
-            <path fill="#ffffff" d="M18.2 32.5c-.8 0-1.6-.1-2.4-.4c-3.1-1-5.3-3.9-5.3-7.2c0-2.2 1-4.3 2.6-5.7c.4-.4.9-.7 1.4-1l.5-1.8c1.3-4.4 5.4-7.5 10-7.5c.5 0 .9 0 1.5.1c.4.1.8.1 1.2.3l.2-.4c1.9-3.3 5.4-5.4 9.2-5.4C43 3.5 47.7 8.2 47.7 14v1c.4.2.9.4 1.3.6c2.8 1.6 4.5 4.6 4.5 7.8c0 4.2-2.9 7.8-7 8.8c-.7.2-1.4.2-2 .2H18.2z" />
-            <path fill="#b6c1d1" d="M37.1 5c5 0 9 4 9 8.9v.7c-2.1.2-4 1-5.4 2.3c1.1-.6 2.4-1 3.7-1c.5 0 1 .1 1.5.1c.8.2 1.6.5 2.3.9c2.3 1.3 3.8 3.7 3.8 6.5c0 3.6-2.5 6.5-5.8 7.3c-.7.2-1.2.3-1.8.3H18.2c-.7 0-1.3-.1-1.9-.3c-2.4-.8-4.2-3.1-4.2-5.8c0-1.8.8-3.5 2.1-4.6c.6-.5 1.3-.9 2-1.2c.6-.2 1.3-.3 2-.3c2 0 3.7.9 4.9 2.4h.1c-1.3-2.4-3.7-4.1-6.6-4.3c1.1-3.7 4.5-6.4 8.5-6.4c.4 0 .9 0 1.3.1c.8.1 1.6.3 2.3.7c2.7 1.2 4.7 3.7 5.1 6.8V18c0-3.4-1.8-6.5-4.5-8.3C30.8 6.9 33.8 5 37.1 5m0-3C33 2 29.2 4.1 27 7.6h-.3c-.6-.1-1.2-.1-1.7-.1c-5.3 0-10 3.5-11.4 8.6l-.3 1.2c-.4.2-.7.5-1.1.8c-2 1.7-3.1 4.2-3.1 6.9c0 4 2.5 7.4 6.3 8.7c.9.3 1.9.5 2.9.5h26.2c.8 0 1.6-.1 2.4-.3c4.8-1.1 8.2-5.3 8.2-10.3c0-3.8-2-7.3-5.3-9.1c-.2-.1-.3-.2-.5-.3v-.1C49.2 7.4 43.8 2 37.1 2z" />
-          </svg>
-        </div>
-        <p className="main-text">{weather.temperature}°</p>
-        <div className="info"><div className="info-left"><p className="text-gray">H:{weather.high}° L: {weather.low}°</p><p>{weather.city}</p></div><p className="info-right">{weather.condition}</p></div>
-      </div>
-    </section>
-  );
-}
 
 function App() {
   const [showLoader, setShowLoader] = useState(true);
@@ -1007,7 +922,7 @@ function PublicApp() {
         <span className={`api-pill api-pill-${apiState}`}><span />{apiState === "online" ? "在线" : apiState === "offline" ? "离线 Demo" : "连接中"}</span>
       </header>
 
-      <div className={`page-stage page-stage-${view}`} key={`${view}-${viewSequence}`}>
+      <PageStage view={view} key={`${view}-${viewSequence}`}>
         {view !== "home" && view !== "guestbook" && view !== "articles" && view !== "notes" && view !== "gallery" && view !== "studio" && view !== "entertainment" && <section className="page-intro">
           <h1>{viewTitle[view]}</h1>
           <p className="intro-copy">汇集 Java 技术文章、阅读笔记、AI 图像作品和 AI 编程项目。</p>
@@ -1022,7 +937,7 @@ function PublicApp() {
         {view === "studio" && <Studio contributions={githubContributions} contributionState={contributionState} repositories={githubRepositories} repositoryState={repositoryState} profile={githubProfile} profileState={profileState} />}
         {view === "entertainment" && <SteamEntertainment overview={steamOverview} state={steamState} musicPreferences={musicPreferences} />}
         {view === "guestbook" && <Guestbook visitor={visitor} message={message} setVisitor={setVisitor} setMessage={setMessage} comments={comments} submitMessage={submitMessage} />}
-      </div>
+      </PageStage>
 
       {selectedArticle && <ArticleReader article={selectedArticle} close={() => setSelectedArticle((current) => current === selectedArticle ? null : current)} key={selectedArticle.title} />}
       {selectedCreation && <CreationDrawer creation={selectedCreation} close={() => setSelectedCreation((current) => current === selectedCreation ? null : current)} key={selectedCreation.title} />}
@@ -1035,10 +950,34 @@ function PublicApp() {
   );
 }
 
+function PageStage({ view, children }: { view: View; children: ReactNode }) {
+  const stageRef = useRef<HTMLDivElement>(null);
+
+  useGSAP(() => {
+    const stage = stageRef.current;
+    if (!stage || prefersReducedMotion()) return;
+
+    gsap.from(stage, {
+      autoAlpha: 0,
+      y: 14,
+      duration: 0.42,
+      ease: "power3.out",
+      clearProps: "transform,opacity,visibility",
+    });
+  }, { scope: stageRef });
+
+  return <div className={`page-stage page-stage-${view}`} ref={stageRef}>{children}</div>;
+}
+
 function Home({ navigate, setSelectedArticle, repositories, repositoryState }: { navigate: (view: View) => void; setSelectedArticle: (article: Article) => void; repositories: GitHubRepositories | null; repositoryState: RepositoryState }) {
   const profileName = "NextAlex";
   const [displayedName, setDisplayedName] = useState("");
   const projects = repositories?.repositories ?? [];
+  const featuredHomeArticles = articles.slice(0, 5).map((article, index) => ({
+    article,
+    headline: ["并发秩序", "线程池生命周期", "异步编排", "Redis 锁边界", "集合取舍"][index] ?? article.series,
+  }));
+  const homeRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     let nextCharacter = 0;
@@ -1051,8 +990,160 @@ function Home({ navigate, setSelectedArticle, repositories, repositoryState }: {
     return () => window.clearInterval(timer);
   }, []);
 
+  useGSAP(() => {
+    const root = homeRef.current;
+    if (!root) return;
+
+    const background = root.querySelector<HTMLElement>(".home-background");
+    const hero = root.querySelector<HTMLElement>(".home-hero");
+    const heroContent = root.querySelector<HTMLElement>(".hero-content");
+    const avatar = root.querySelector<HTMLElement>(".profile-avatar");
+    const profileItems = Array.from(root.querySelectorAll<HTMLElement>(".profile-copy > *"));
+    const recentItems = Array.from(root.querySelectorAll<HTMLElement>(".recent-article"));
+    const articleSystemInner = root.querySelector<HTMLElement>(".home-article-systems-inner");
+    const articleHoverBg = root.querySelector<HTMLElement>(".home-article-hover-bg");
+    const articleCursor = root.querySelector<HTMLElement>(".home-article-cursor");
+    const articleRows = Array.from(root.querySelectorAll<HTMLElement>(".home-article-system-row"));
+    const lowerPanels = Array.from(root.querySelectorAll<HTMLElement>(".home-lower > *"));
+    const lowerSection = root.querySelector<HTMLElement>(".home-lower");
+    const media = gsap.matchMedia();
+
+    media.add("(prefers-reduced-motion: no-preference)", () => {
+      const cleanup: (() => void)[] = [];
+      const entrance = gsap.timeline({ defaults: { ease: "power3.out" } });
+      if (avatar) entrance.from(avatar, { autoAlpha: 0, scale: 0.9, duration: 0.58 });
+      if (profileItems.length > 0) entrance.from(profileItems, { autoAlpha: 0, x: 22, duration: 0.48, stagger: 0.08 }, avatar ? 0.14 : 0);
+
+      if (articleSystemInner && articleHoverBg && articleRows.length > 0) {
+        gsap.set(articleHoverBg, { autoAlpha: 0, y: 0, scaleY: 0, transformOrigin: "top center", height: articleRows[0]?.offsetHeight || 94 });
+        if (articleCursor) gsap.set(articleCursor, { autoAlpha: 0, scale: 0.72, xPercent: -50, yPercent: -50 });
+
+        const cursorX = articleCursor ? gsap.quickTo(articleCursor, "x", { duration: 0.28, ease: "power3.out" }) : undefined;
+        const cursorY = articleCursor ? gsap.quickTo(articleCursor, "y", { duration: 0.28, ease: "power3.out" }) : undefined;
+        const activateRow = (row: HTMLElement) => {
+          const containerRect = articleSystemInner.getBoundingClientRect();
+          const rowRect = row.getBoundingClientRect();
+          articleSystemInner.classList.add("is-hovering");
+          articleRows.forEach((item) => item.classList.toggle("is-active", item === row));
+          articleCursor?.classList.add("is-over-dark");
+          gsap.to(articleRows.filter((item) => item !== row).map((item) => item.querySelector("h2")), { x: 0, duration: 0.24, ease: "power2.out", overwrite: "auto" });
+          gsap.set(articleHoverBg, {
+            autoAlpha: 1,
+            y: rowRect.top - containerRect.top,
+            height: rowRect.height,
+            scaleY: 0,
+          });
+          gsap.to(articleHoverBg, {
+            scaleY: 1,
+            duration: 0.38,
+            ease: "power3.out",
+            overwrite: "auto",
+          });
+          gsap.fromTo(row.querySelector("h2"), { x: 0 }, { x: 12, duration: 0.34, ease: "power3.out", overwrite: "auto" });
+        };
+        const clearActiveRow = () => {
+          articleSystemInner.classList.remove("is-hovering");
+          articleRows.forEach((item) => item.classList.remove("is-active"));
+          articleCursor?.classList.remove("is-over-dark");
+          gsap.to(articleRows.map((item) => item.querySelector("h2")), { x: 0, duration: 0.22, ease: "power2.out", overwrite: "auto" });
+          gsap.to(articleHoverBg, { autoAlpha: 0, scaleY: 0, duration: 0.2, ease: "power2.out", overwrite: "auto" });
+          if (articleCursor) gsap.to(articleCursor, { autoAlpha: 0, scale: 0.72, duration: 0.18, ease: "power2.out", overwrite: "auto" });
+        };
+        const moveCursor = (event: PointerEvent) => {
+          if (!articleCursor || !cursorX || !cursorY) return;
+          const containerRect = articleSystemInner.getBoundingClientRect();
+          cursorX(event.clientX - containerRect.left);
+          cursorY(event.clientY - containerRect.top);
+          const activeRow = articleRows.find((item) => item.classList.contains("is-active"));
+          if (!activeRow) {
+            articleCursor.classList.remove("is-over-dark");
+            return;
+          }
+          const activeRect = activeRow.getBoundingClientRect();
+          articleCursor.classList.toggle("is-over-dark", event.clientY >= activeRect.top && event.clientY <= activeRect.bottom);
+        };
+        const showCursor = () => {
+          if (!articleCursor) return;
+          gsap.to(articleCursor, { autoAlpha: 1, scale: 1, duration: 0.22, ease: "power3.out", overwrite: "auto" });
+        };
+
+        articleRows.forEach((row) => {
+          const enterRow = () => activateRow(row);
+          const pressRow = () => activateRow(row);
+          row.addEventListener("pointerenter", enterRow);
+          row.addEventListener("pointerdown", pressRow);
+          cleanup.push(() => row.removeEventListener("pointerenter", enterRow));
+          cleanup.push(() => row.removeEventListener("pointerdown", pressRow));
+        });
+        articleSystemInner.addEventListener("pointerenter", showCursor);
+        articleSystemInner.addEventListener("pointermove", moveCursor);
+        articleSystemInner.addEventListener("pointerleave", clearActiveRow);
+        cleanup.push(() => articleSystemInner.removeEventListener("pointerenter", showCursor));
+        cleanup.push(() => articleSystemInner.removeEventListener("pointermove", moveCursor));
+        cleanup.push(() => articleSystemInner.removeEventListener("pointerleave", clearActiveRow));
+      }
+
+      recentItems.forEach((item) => {
+        ScrollTrigger.create({
+          trigger: item,
+          start: "top 86%",
+          once: true,
+          onEnter: () => gsap.fromTo(item, { autoAlpha: 0, y: 24 }, {
+            autoAlpha: 1,
+            y: 0,
+            duration: 0.58,
+            ease: "power3.out",
+            clearProps: "transform,opacity,visibility",
+          }),
+        });
+      });
+
+      if (lowerSection && lowerPanels.length > 0) {
+        ScrollTrigger.create({
+          trigger: lowerSection,
+          start: "top 84%",
+          once: true,
+          onEnter: () => gsap.fromTo(lowerPanels, { autoAlpha: 0, y: 28 }, {
+            autoAlpha: 1,
+            y: 0,
+            duration: 0.62,
+            ease: "power3.out",
+            stagger: 0.12,
+            clearProps: "transform,opacity,visibility",
+          }),
+        });
+      }
+
+      return () => cleanup.forEach((release) => release());
+    });
+
+    media.add("(min-width: 769px) and (prefers-reduced-motion: no-preference)", () => {
+      if (!background || !hero || !heroContent) return;
+
+      gsap.timeline({
+        scrollTrigger: {
+          trigger: hero,
+          start: "top top",
+          end: "bottom 28%",
+          scrub: 0.7,
+        },
+      })
+        .to(background, { autoAlpha: 0.16, scale: 1.07, filter: "blur(7px)", ease: "none" }, 0)
+        .to(heroContent, { autoAlpha: 0, y: -46, ease: "none" }, 0)
+        .to(avatar, { scale: 0.92, ease: "none" }, 0);
+    });
+
+    return () => media.revert();
+  }, { scope: homeRef });
+
+  useEffect(() => {
+    if (displayedName !== profileName && projects.length === 0) return;
+    const refreshTimer = window.setTimeout(() => ScrollTrigger.refresh(), 80);
+    return () => window.clearTimeout(refreshTimer);
+  }, [displayedName, profileName, projects.length]);
+
   return (
-    <>
+    <div className="home-motion-root" ref={homeRef}>
       <div className="home-background" aria-hidden="true" />
       <div className="home-canvas">
       <section className="home-hero">
@@ -1070,9 +1161,8 @@ function Home({ navigate, setSelectedArticle, repositories, repositoryState }: {
           </div>
         </div>
       </section>
-      <section className="recent-section home-content">
-        <div className="section-heading"><div><h2>近期文章</h2></div><button className="text-action" onClick={() => navigate("articles")}>全部文章 <span>↗</span></button></div>
-        <div className="recent-list">{articles.slice(0, 3).map((article, index) => <button className="recent-article" key={article.title} onClick={() => setSelectedArticle(article)}><span className="recent-index">0{index + 1}</span><div><p>{article.category} / {article.series}</p><h3>{article.title}</h3><span>{article.excerpt}</span></div><aside><time>{article.date}</time><small>{article.readTime}</small><b>↗</b></aside></button>)}</div>
+      <section className="recent-section home-article-systems" aria-label="首页文章展示">
+        <div className="home-article-systems-inner home-content"><span className="home-article-hover-bg" aria-hidden="true" /><span className="home-article-cursor" aria-hidden="true" />{featuredHomeArticles.map(({ article, headline }, index) => <button className="recent-article home-article-system-row" key={article.title} onClick={() => window.setTimeout(() => setSelectedArticle(article), prefersReducedMotion() ? 0 : 180)}><span className="recent-index">[ {String(index + 1).padStart(2, "0")} ]</span><h2>{headline}</h2><p><strong>{article.title}</strong></p></button>)}</div>
       </section>
       <section className="home-lower home-content">
         <div><div className="section-heading compact"><div><h2>创作项目</h2></div><button className="text-action" onClick={() => navigate("studio")}>进入创作中心 <span>↗</span></button></div><div className="home-project-grid">{repositoryState === "ready" && projects.length > 0 ? projects.slice(0, 2).map((project) => <RepositoryProjectCard className="home-project-card" key={project.htmlUrl} project={project} username={repositories?.username || "GitHub"} />) : <p className="home-project-empty">{repositoryState === "loading" ? "正在同步 GitHub 项目" : "GitHub 项目暂不可用"}</p>}</div></div>
@@ -1080,7 +1170,7 @@ function Home({ navigate, setSelectedArticle, repositories, repositoryState }: {
         <HomeSocialTooltip />
       </section>
       </div>
-    </>
+    </div>
   );
 }
 
@@ -1128,12 +1218,60 @@ function HomeQuickFolder({ navigate }: { navigate: (view: View) => void }) {
 }
 
 function Articles({ activeCategory, setActiveCategory, paginatedArticles, articlePage, articlePageCount, setArticlePage, setSelectedArticle }: { activeCategory: string; setActiveCategory: (category: string) => void; paginatedArticles: Article[]; articlePage: number; articlePageCount: number; setArticlePage: (page: number) => void; setSelectedArticle: (article: Article) => void }) {
-  return <section className="content-band article-index"><div className="article-feed"><h1>最新发布</h1><div className="article-list">{paginatedArticles.map((article) => <button className="article-feed-item" key={article.title} onClick={() => setSelectedArticle(article)}><h2>{article.title}</h2><p>{article.excerpt}</p><span className="article-read-action">阅读全文 <i aria-hidden="true">→</i></span></button>)}</div><nav className="article-pagination" aria-label="文章分页"><button className="article-pagination-arrow" type="button" onClick={() => setArticlePage(articlePage - 1)} disabled={articlePage === 1} aria-label="上一页" title="上一页"><ChevronLeft aria-hidden="true" size={17} /></button>{Array.from({ length: articlePageCount }, (_, index) => index + 1).map((page) => <button className={`article-pagination-page${page === articlePage ? " active" : ""}`} type="button" key={page} aria-current={page === articlePage ? "page" : undefined} onClick={() => setArticlePage(page)}>{page}</button>)}<button className="article-pagination-arrow" type="button" onClick={() => setArticlePage(articlePage + 1)} disabled={articlePage === articlePageCount} aria-label="下一页" title="下一页"><ChevronRight aria-hidden="true" size={17} /></button></nav></div><aside className="article-aside"><section className="article-category-panel"><h2>文章分类</h2><div className="article-category-tags" role="tablist" aria-label="文章分类">{categories.map((category) => <button key={category} role="tab" aria-selected={activeCategory === category} className={activeCategory === category ? "filter-active" : ""} onClick={() => setActiveCategory(category)}>{category}</button>)}</div></section><section className="popular-articles"><h2>热门文章</h2><div>{articles.slice(0, 5).map((article) => <button key={article.title} onClick={() => setSelectedArticle(article)}><span aria-hidden="true">→</span>{article.title}</button>)}</div></section><ArticleWeatherCard /></aside></section>;
+  const articleRef = useRef<HTMLElement>(null);
+
+  useGSAP(() => {
+    const root = articleRef.current;
+    const items = root ? Array.from(root.querySelectorAll<HTMLElement>(".article-feed-item")) : [];
+    if (!root || items.length === 0 || prefersReducedMotion()) return;
+
+    gsap.from(items, {
+      autoAlpha: 0,
+      y: 24,
+      duration: 0.54,
+      ease: "power3.out",
+      stagger: { each: 0.08, from: "start" },
+      clearProps: "transform,opacity,visibility",
+      scrollTrigger: {
+        trigger: root,
+        start: "top 82%",
+        once: true,
+      },
+    });
+  }, { scope: articleRef, dependencies: [activeCategory, articlePage, paginatedArticles.length], revertOnUpdate: true });
+
+  return <section className="content-band article-index" ref={articleRef}><div className="article-feed"><h1>最新发布</h1><div className="article-list">{paginatedArticles.map((article) => <button className="article-feed-item" key={article.title} onClick={() => setSelectedArticle(article)}><h2>{article.title}</h2><p>{article.excerpt}</p><span className="article-read-action">阅读全文 <i aria-hidden="true">→</i></span></button>)}</div><nav className="article-pagination" aria-label="文章分页"><button className="article-pagination-arrow" type="button" onClick={() => setArticlePage(articlePage - 1)} disabled={articlePage === 1} aria-label="上一页" title="上一页"><ChevronLeft aria-hidden="true" size={17} /></button>{Array.from({ length: articlePageCount }, (_, index) => index + 1).map((page) => <button className={`article-pagination-page${page === articlePage ? " active" : ""}`} type="button" key={page} aria-current={page === articlePage ? "page" : undefined} onClick={() => setArticlePage(page)}>{page}</button>)}<button className="article-pagination-arrow" type="button" onClick={() => setArticlePage(articlePage + 1)} disabled={articlePage === articlePageCount} aria-label="下一页" title="下一页"><ChevronRight aria-hidden="true" size={17} /></button></nav></div><aside className="article-aside"><section className="article-category-panel"><h2>文章分类</h2><div className="article-category-tags" role="tablist" aria-label="文章分类">{categories.map((category) => <button key={category} role="tab" aria-selected={activeCategory === category} className={activeCategory === category ? "filter-active" : ""} onClick={() => setActiveCategory(category)}>{category}</button>)}</div></section><section className="popular-articles"><h2>热门文章</h2><div>{articles.slice(0, 5).map((article) => <button key={article.title} onClick={() => setSelectedArticle(article)}><span aria-hidden="true">→</span>{article.title}</button>)}</div></section></aside></section>;
 }
 
 function Notes({ notes, setSelectedNote }: { notes: Note[]; setSelectedNote: (note: Note) => void }) {
+  const notesRef = useRef<HTMLElement>(null);
+
+  useGSAP(() => {
+    const root = notesRef.current;
+    const cards = root ? Array.from(root.querySelectorAll<HTMLElement>(".note-wobble-button")) : [];
+    if (!root || cards.length === 0 || prefersReducedMotion()) return;
+
+    gsap.set(cards, { autoAlpha: 0, y: 28 });
+
+    const timeline = gsap.timeline({
+      scrollTrigger: {
+        trigger: root,
+        start: "top 82%",
+        once: true,
+      },
+      defaults: { ease: "power3.out" },
+    });
+    timeline.to(cards, {
+      autoAlpha: 1,
+      y: 0,
+      duration: 0.56,
+      stagger: { each: 0.09, from: "start" },
+      clearProps: "transform,opacity,visibility",
+    });
+  }, { scope: notesRef, dependencies: [notes.length], revertOnUpdate: true });
+
   return (
-    <section className="content-band notes-layout">
+    <section className="content-band notes-layout" ref={notesRef}>
       <div className="notes-list">
         <h1>最近更新</h1>
         <div className="notes-wobble-grid">{notes.map((note, index) => <WobbleNoteCard note={note} index={index} key={`${note.year ?? "2026"}-${note.date}-${note.title}`} open={() => setSelectedNote(note)} />)}</div>
@@ -1234,6 +1372,31 @@ function LayoutGrid({ cards }: { cards: LayoutGridCard[] }) {
     return () => observer.disconnect();
   }, []);
 
+  useGSAP(() => {
+    const grid = gridRef.current;
+    if (!grid || cards.length === 0) return;
+
+    const slots = Array.from(grid.querySelectorAll<HTMLElement>(".layout-grid-slot"));
+    const media = gsap.matchMedia();
+    media.add("(prefers-reduced-motion: no-preference)", () => {
+      gsap.from(slots, {
+        autoAlpha: 0,
+        y: 30,
+        duration: 0.56,
+        ease: "power3.out",
+        stagger: { each: 0.055, from: "start" },
+        clearProps: "transform,opacity,visibility",
+        scrollTrigger: { trigger: grid, start: "top 82%", once: true },
+      });
+    });
+
+    const refreshTimer = window.setTimeout(() => ScrollTrigger.refresh(), 0);
+    return () => {
+      window.clearTimeout(refreshTimer);
+      media.revert();
+    };
+  }, { scope: gridRef, dependencies: [cards.length], revertOnUpdate: true });
+
   function handleClick(card: LayoutGridCard) {
     setLastSelected(selected);
     setSelected(card);
@@ -1332,6 +1495,7 @@ function RepositoryProjectCard({ project, username, className = "" }: { project:
 }
 
 function Studio({ contributions, contributionState, repositories, repositoryState, profile, profileState }: { contributions: GitHubContributions | null; contributionState: ContributionState; repositories: GitHubRepositories | null; repositoryState: RepositoryState; profile: GitHubProfile | null; profileState: RepositoryState }) {
+  const studioRef = useRef<HTMLElement>(null);
   const contributionYear = contributions?.year ?? new Date().getFullYear();
   const contributionWeeks = buildContributionWeeks(contributionYear, contributions?.days ?? []);
   const contributionMonthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -1343,9 +1507,32 @@ function Studio({ contributions, contributionState, repositories, repositoryStat
   });
   const contributionSummary = contributionState === "ready" ? `${contributionYear} 年 ${contributions?.total ?? 0} 次贡献` : contributionState === "loading" ? "正在同步贡献记录" : "贡献记录暂不可用";
   const projects = repositories?.repositories ?? [];
-  const profileStat = (value: number | undefined) => profileState === "ready" && profile && value !== undefined ? value.toLocaleString("zh-CN") : "—";
+  const profileStat = (value: number | undefined) => profileState === "ready" && profile && value !== undefined ? value.toLocaleString("zh-CN") : "-";
 
-  return <section className="studio-layout">
+  useGSAP(() => {
+    const root = studioRef.current;
+    if (!root || prefersReducedMotion()) return;
+
+    const intro = root.querySelector<HTMLElement>(".studio-intro");
+    const contribution = root.querySelector<HTMLElement>(".contribution-panel");
+    const projectsRoot = root.querySelector<HTMLElement>(".studio-projects");
+    const projectCards = projectsRoot ? Array.from(projectsRoot.querySelectorAll<HTMLElement>(".studio-project-parent")) : [];
+    const timeline = gsap.timeline({
+      scrollTrigger: {
+        trigger: root,
+        start: "top 82%",
+        toggleActions: "play none none reset",
+      },
+      defaults: { duration: 0.58, ease: "power3.out" },
+    });
+
+    if (intro) timeline.from(intro, { autoAlpha: 0, x: -26, clearProps: "transform,opacity,visibility" }, 0);
+    if (contribution) timeline.from(contribution, { autoAlpha: 0, x: 26, clearProps: "transform,opacity,visibility" }, 0.08);
+    if (projectsRoot) timeline.from(projectsRoot, { autoAlpha: 0, y: 24, clearProps: "transform,opacity,visibility" }, "-=0.22");
+    if (projectCards.length > 0) timeline.from(projectCards, { autoAlpha: 0, y: 24, duration: 0.48, stagger: 0.08, clearProps: "transform,opacity,visibility" }, "-=0.26");
+  }, { scope: studioRef, dependencies: [contributionState, repositoryState, projects.length, profileState], revertOnUpdate: true });
+
+  return <section className="studio-layout" ref={studioRef}>
     <div className="studio-overview">
       <div className="studio-intro">
         <p className="section-kicker">创作中心</p>
