@@ -10,6 +10,7 @@ import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
 import AdminApp from "./AdminApp";
 import HomeDropScene from "./components/HomeDropScene";
+import HomeTechLandmarkScene from "./components/HomeTechLandmarkScene";
 
 gsap.registerPlugin(useGSAP, ScrollTrigger);
 
@@ -165,6 +166,15 @@ const noteColors = ["ice", "mint", "lavender", "rose"] as const;
 const steamGameColors = ["#e11d48", "#f472b6", "#fb923c", "#facc15", "#84cc16", "#10b981", "#0ea5e9", "#3b82f6", "#8b5cf6", "#a78bfa"] as const;
 type NoteColor = typeof noteColors[number];
 const articlesPerPage = 5;
+
+type HomeTechLandmarkKind = "java" | "go" | "rust" | "postgresql";
+
+const homeTechLandmarks: { kind: HomeTechLandmarkKind; color: string; top: string }[] = [
+  { kind: "java", color: "#db4437", top: "112vh" },
+  { kind: "go", color: "#00add8", top: "158vh" },
+  { kind: "rust", color: "#e87934", top: "204vh" },
+  { kind: "postgresql", color: "#336791", top: "250vh" },
+];
 
 function noteRecordToNote(record: NoteRecord): Note | null {
   const title = record.title.trim();
@@ -956,7 +966,9 @@ function PageStage({ view, children }: { view: View; children: ReactNode }) {
 
   useGSAP(() => {
     const stage = stageRef.current;
-    if (!stage || prefersReducedMotion()) return;
+    // Keep the home scene free of the page transition transform. The drop
+    // object is fixed beneath the article layer and must use the viewport.
+    if (!stage || view === "home" || prefersReducedMotion()) return;
 
     gsap.from(stage, {
       autoAlpha: 0,
@@ -970,6 +982,22 @@ function PageStage({ view, children }: { view: View; children: ReactNode }) {
   return <div className={`page-stage page-stage-${view}`} ref={stageRef}>{children}</div>;
 }
 
+function HomeTechIcon({ kind }: { kind: HomeTechLandmarkKind }) {
+  if (kind === "java") {
+    return <svg viewBox="0 0 48 48" aria-hidden="true"><path d="M18 8c6 4-1 6 4 10 4 3 4 6-1 9 8-2 11-7 7-11-3-3-6-4-3-8-5 2-8 4-7 7Z" fill="currentColor" opacity=".92" /><path d="M12 29h24l-2 8H14l-2-8Zm4 11h16" fill="none" stroke="currentColor" strokeLinecap="round" strokeWidth="3" /><path d="M9 26c5 3 25 3 30 0" fill="none" stroke="currentColor" strokeLinecap="round" strokeWidth="2" opacity=".65" /></svg>;
+  }
+
+  if (kind === "go") {
+    return <svg viewBox="0 0 48 48" aria-hidden="true"><path d="M8 25c0-10 6-16 16-16s16 6 16 16-6 15-16 15S8 35 8 25Z" fill="currentColor" opacity=".92" /><path d="M15 20h5m8 0h5M18 28c2 3 10 3 12 0" fill="none" stroke="#123654" strokeLinecap="round" strokeWidth="3" /><circle cx="18" cy="23" r="2" fill="#123654" /><circle cx="30" cy="23" r="2" fill="#123654" /></svg>;
+  }
+
+  if (kind === "rust") {
+    return <svg viewBox="0 0 48 48" aria-hidden="true"><path d="m24 6 3 3 4-1 2 4 4 1-1 4 3 3-3 3 1 4-4 2-1 4-4-1-4 3-3-3-4 1-2-4-4-1 1-4-3-3 3-3-1-4 4-2 1-4 4 1 4-3Z" fill="currentColor" opacity=".94" /><path d="M17 32V17h8c4 0 7 2 7 6 0 2-1 4-3 5l4 4h-5l-3-3h-3v3h-5Zm5-7h3c1 0 2-1 2-2s-1-2-2-2h-3v4Z" fill="#54230e" /></svg>;
+  }
+
+  return <svg viewBox="0 0 48 48" aria-hidden="true"><path d="M12 18c0-5 5-9 12-9s12 4 12 9v14c0 5-5 9-12 9s-12-4-12-9V18Z" fill="currentColor" opacity=".9" /><path d="M12 18c0 5 5 8 12 8s12-3 12-8-5-9-12-9-12 4-12 9Z" fill="none" stroke="#062f57" strokeWidth="2.5" /><path d="M18 29c2-3 10-3 12 0M19 34h10" fill="none" stroke="#062f57" strokeLinecap="round" strokeWidth="2.5" /></svg>;
+}
+
 function Home({ navigate, setSelectedArticle, repositories, repositoryState }: { navigate: (view: View) => void; setSelectedArticle: (article: Article) => void; repositories: GitHubRepositories | null; repositoryState: RepositoryState }) {
   const profileName = "NextAlex";
   const [displayedName, setDisplayedName] = useState("");
@@ -978,27 +1006,6 @@ function Home({ navigate, setSelectedArticle, repositories, repositoryState }: {
     article,
     headline: ["并发秩序", "线程池生命周期", "异步编排", "Redis 锁边界", "集合取舍"][index] ?? article.series,
   }));
-  const impactPixels = useMemo(() => Array.from({ length: 118 }, (_, index) => {
-    const angle = index * 2.399963 + (index % 7) * 0.08;
-    const isBlob = index % 9 === 0;
-    const isStreak = index % 5 === 0;
-    const distance = isBlob ? 42 + (index % 6) * 16 : 82 + (index % 14) * 18;
-    const baseSize = isBlob ? 18 + (index % 4) * 8 : isStreak ? 9 + (index % 3) * 4 : 6 + (index % 5) * 2;
-    const width = Math.round(isStreak ? baseSize * (2.7 + (index % 4) * 0.34) : isBlob ? baseSize * 1.55 : baseSize * (1 + (index % 3) * 0.18));
-    const height = Math.round(isStreak ? baseSize * 0.74 : isBlob ? baseSize * 1.18 : baseSize * (0.92 + (index % 4) * 0.1));
-    return {
-      x: Math.round(Math.cos(angle) * distance * (index % 4 === 0 ? 1.62 : 1.18)),
-      y: Math.round(Math.abs(Math.sin(angle)) * distance * 0.66 + (index % 8) * 10 - (index % 6 === 0 ? 48 : 14)),
-      size: baseSize,
-      width,
-      height,
-      radius: isStreak ? "999px" : index % 3 === 0 ? "58% 42% 64% 36% / 44% 60% 40% 56%" : "50%",
-      scale: (isBlob ? 1.75 + (index % 4) * 0.2 : isStreak ? 1.18 + (index % 5) * 0.16 : 0.88 + (index % 6) * 0.18).toFixed(2),
-      rotation: (index % 2 === 0 ? 1 : -1) * (46 + index * 9),
-      delay: (index % 13) * 0.006,
-      duration: (0.82 + (index % 7) * 0.055).toFixed(2),
-    };
-  }), []);
   const homeRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -1030,8 +1037,6 @@ function Home({ navigate, setSelectedArticle, repositories, repositoryState }: {
     const dropObject = root.querySelector<HTMLElement>(".home-drop-object");
     const dropVisual = root.querySelector<HTMLElement>(".home-drop-visual") ?? dropObject;
     const articleSystems = root.querySelector<HTMLElement>(".home-article-systems");
-    const impactLayer = root.querySelector<HTMLElement>(".home-article-impact-pixels");
-    const impactPixelElements = Array.from(root.querySelectorAll<HTMLElement>(".home-impact-pixel"));
     const lowerPanels = Array.from(root.querySelectorAll<HTMLElement>(".home-lower > *"));
     const lowerSection = root.querySelector<HTMLElement>(".home-lower");
     const media = gsap.matchMedia();
@@ -1111,142 +1116,61 @@ function Home({ navigate, setSelectedArticle, repositories, repositoryState }: {
         cleanup.push(() => articleSystemInner.removeEventListener("pointerleave", clearActiveRow));
       }
 
-      if (dropScene && dropObject && dropVisual && articleSystems && impactLayer && impactPixelElements.length > 0) {
-        let impacted = false;
+      if (dropScene && dropObject && dropVisual && articleSystems) {
         const dropStartScale = 1;
         const dropMinScale = 0.5;
-        const dropMorphStart = 0.38;
-        const dropMorphEnd = 0.64;
+        const dropMorphStart = 0.32;
+        const dropMorphEnd = 0.72;
         let dropArticleStartTop = 1;
-        let dropArticleImpactTop = 1;
+        let dropArticleEntryTop = 1;
         let dropTravelDistance = 1;
         let dropBaseHeight = 1;
-        let currentDropScale = dropStartScale;
-        gsap.set(dropVisual, { xPercent: -50, yPercent: -50, autoAlpha: 1, y: 0, scale: 1, rotation: -6 });
+        let dropHiddenByArticle = false;
+        gsap.set(dropVisual, { xPercent: -50, yPercent: -50, transformOrigin: "50% 50%", autoAlpha: 1, y: 0, scale: 1, rotation: -6 });
         dropVisual.style.setProperty("--drop-visual-scale", String(dropStartScale));
         dropVisual.style.setProperty("--drop-cube-progress", "0");
-        gsap.set(impactLayer, { x: 0, y: 0 });
-        gsap.set(impactPixelElements, { autoAlpha: 0, x: 0, y: 0, scale: 0, rotation: 0 });
-
+        dropVisual.style.setProperty("--drop-travel-progress", "0");
         const measureDropTravel = () => {
           const ballRect = dropVisual.getBoundingClientRect();
           const articleRect = articleSystems.getBoundingClientRect();
           dropBaseHeight = Math.max(1, ballRect.height);
           dropArticleStartTop = articleRect.top + window.scrollY;
-          dropArticleImpactTop = ballRect.top + ballRect.height / 2 + (dropBaseHeight * dropMinScale) / 2;
-          dropTravelDistance = Math.max(1, dropArticleStartTop - dropArticleImpactTop);
-        };
-
-        const getDropScaleForArticleTop = (articleTop: number) => {
-          const travelProgress = gsap.utils.clamp(0, 1, (dropArticleStartTop - articleTop) / dropTravelDistance);
-
-          return gsap.utils.interpolate(dropStartScale, dropMinScale, travelProgress);
+          dropArticleEntryTop = ballRect.top + ballRect.height / 2 + (dropBaseHeight * dropMinScale) / 2;
+          dropTravelDistance = Math.max(1, dropArticleStartTop - dropArticleEntryTop);
         };
 
         const syncDropScale = () => {
-          if (impacted) return;
           const articleRect = articleSystems.getBoundingClientRect();
           const travelProgress = gsap.utils.clamp(0, 1, (dropArticleStartTop - articleRect.top) / dropTravelDistance);
           const nextScale = gsap.utils.interpolate(dropStartScale, dropMinScale, travelProgress);
           const morphProgress = gsap.utils.clamp(0, 1, (travelProgress - dropMorphStart) / (dropMorphEnd - dropMorphStart));
 
-          currentDropScale = nextScale;
           dropVisual.style.setProperty("--drop-visual-scale", String(nextScale));
           dropVisual.style.setProperty("--drop-cube-progress", String(morphProgress));
+          dropVisual.style.setProperty("--drop-travel-progress", String(travelProgress));
         };
 
         measureDropTravel();
-
-        const getVirtualDropRect = () => {
-          const visualRect = dropVisual.getBoundingClientRect();
-          const centerX = visualRect.left + visualRect.width / 2;
-          const centerY = visualRect.top + visualRect.height / 2;
-          const width = visualRect.width * currentDropScale;
-          const height = visualRect.height * currentDropScale;
-
-          return {
-            left: centerX - width / 2,
-            top: centerY - height / 2,
-            width,
-            height,
-            right: centerX + width / 2,
-            bottom: centerY + height / 2,
-          };
-        };
-
-        const hasVisuallyHitArticle = () => {
-          const ballRect = getVirtualDropRect();
-          const articleRect = articleSystems.getBoundingClientRect();
-
-          return ballRect.bottom >= articleRect.top - 4;
-        };
-
-        const hasClearedRestoredBall = () => {
-          const articleRect = articleSystems.getBoundingClientRect();
-          const pinRect = dropObject.getBoundingClientRect();
-          const restoredScale = getDropScaleForArticleTop(articleRect.top);
-          const restoredBottom = pinRect.top + pinRect.height / 2 + (dropBaseHeight * restoredScale) / 2;
-
-          return articleRect.top > restoredBottom + 12;
-        };
-
-        const syncImpactOrigin = () => {
-          const ballRect = getVirtualDropRect();
-          const layerRect = impactLayer.getBoundingClientRect();
-          const impactX = ballRect.left + ballRect.width / 2 - layerRect.left;
-          const impactY = Math.max(0, Math.min(120, ballRect.bottom - layerRect.top));
-
-          gsap.set(impactLayer, { x: impactX, y: impactY });
-        };
-
-        const resetImpact = () => {
-          impacted = false;
-          articleSystems.classList.remove("is-impacting");
-          gsap.killTweensOf([dropVisual, impactPixelElements]);
-          gsap.set(dropVisual, { xPercent: -50, yPercent: -50, autoAlpha: 1, y: 0, scale: 1, rotation: -6 });
-          syncDropScale();
-          gsap.set(impactLayer, { x: 0, y: 0 });
-          gsap.set(impactPixelElements, { autoAlpha: 0, x: 0, y: 0, scale: 0, rotation: 0 });
-        };
-
-        const triggerImpact = () => {
-          if (impacted) return;
-          impacted = true;
-          syncImpactOrigin();
-          articleSystems.classList.add("is-impacting");
-          gsap.timeline({ defaults: { overwrite: "auto" } })
-            .to(dropVisual, { scale: 0.64, rotation: "+=18", duration: 0.08, ease: "power3.out" })
-            .to(dropVisual, { autoAlpha: 0, scale: 0.04, y: "+=34", rotation: "+=52", duration: 0.2, ease: "power4.in" }, 0.04);
-          gsap.fromTo(articleSystems, { y: 34, scaleY: 0.982 }, { y: 0, scaleY: 1, duration: 0.72, ease: "elastic.out(1, 0.42)", overwrite: "auto" });
-          gsap.fromTo(articleRows, { y: (index) => index % 2 === 0 ? 18 : -14, scaleX: 0.992 }, { y: 0, scaleX: 1, duration: 0.66, ease: "elastic.out(1, 0.56)", stagger: 0.028, clearProps: "transform" });
-          gsap.fromTo(impactPixelElements, { autoAlpha: 1, x: 0, y: 0, scale: 0.08, rotation: 0 }, {
-            autoAlpha: 0,
-            x: (_, target) => Number((target as HTMLElement).dataset.impactX || 0),
-            y: (_, target) => Number((target as HTMLElement).dataset.impactY || 0),
-            scale: (_, target) => Number((target as HTMLElement).dataset.impactScale || 1),
-            rotation: (_, target) => Number((target as HTMLElement).dataset.impactRotation || 0),
-            duration: (_, target) => Number((target as HTMLElement).dataset.impactDuration || 0.96),
-            delay: (_, target) => Number((target as HTMLElement).dataset.impactDelay || 0),
-            ease: "power4.out",
-            stagger: { amount: 0.22, from: "center" },
-            overwrite: "auto",
-          });
-        };
-
-        const dropImpactTrigger = ScrollTrigger.create({
+        const dropScrollTrigger = ScrollTrigger.create({
           trigger: dropScene,
           start: "top top",
           end: "bottom top",
           onRefresh: measureDropTravel,
-          onUpdate: (self) => {
-            if (impacted && (self.progress < 0.05 || hasClearedRestoredBall())) resetImpact();
+          onUpdate: () => {
+            const articleTop = articleSystems.getBoundingClientRect().top;
+            if (articleTop <= 0 && !dropHiddenByArticle) {
+              dropHiddenByArticle = true;
+              gsap.to(dropVisual, { autoAlpha: 0, duration: 0.16, ease: "power2.out", overwrite: "auto" });
+            } else if (articleTop > 0 && dropHiddenByArticle) {
+              dropHiddenByArticle = false;
+              gsap.to(dropVisual, { autoAlpha: 1, duration: 0.16, ease: "power2.out", overwrite: "auto" });
+            }
             syncDropScale();
-            if (!impacted && hasVisuallyHitArticle() && self.progress > 0.08) triggerImpact();
           },
         });
 
-        cleanup.push(() => dropImpactTrigger.kill());
-        cleanup.push(() => gsap.killTweensOf([dropVisual, articleSystems, ...articleRows, ...impactPixelElements]));
+        cleanup.push(() => dropScrollTrigger.kill());
+        cleanup.push(() => gsap.killTweensOf(dropVisual));
       }
 
       recentItems.forEach((item) => {
@@ -1323,11 +1247,18 @@ function Home({ navigate, setSelectedArticle, repositories, repositoryState }: {
               </div>
             </div>
           </div>
+          <div className="home-drop-landmarks" aria-hidden="true">
+            {homeTechLandmarks.map((landmark, index) => <div className={`home-drop-landmark home-drop-landmark-${index % 2 === 0 ? "left" : "right"}`} key={landmark.kind} style={{ "--landmark-top": landmark.top } as CSSProperties}>
+              <div className="home-drop-landmark-bubble">
+                <HomeTechLandmarkScene color={landmark.color} />
+                <span className={`home-drop-landmark-mark home-drop-landmark-mark-${landmark.kind}`}><HomeTechIcon kind={landmark.kind} /></span>
+              </div>
+            </div>)}
+          </div>
           <div className="home-drop-object" aria-hidden="true"><div className="home-drop-visual"><HomeDropScene /></div></div>
         </div>
       </section>
       <section className="recent-section home-article-systems" aria-label="首页文章展示">
-        <div className="home-article-impact-pixels" aria-hidden="true">{impactPixels.map((pixel, index) => <span className={`home-impact-pixel home-impact-pixel-${index % 6}`} key={index} data-impact-x={pixel.x} data-impact-y={pixel.y} data-impact-scale={pixel.scale} data-impact-rotation={pixel.rotation} data-impact-delay={pixel.delay} data-impact-duration={pixel.duration} style={{ "--pixel-size": `${pixel.size}px`, "--pixel-width": `${pixel.width}px`, "--pixel-height": `${pixel.height}px`, "--pixel-radius": pixel.radius } as CSSProperties} />)}</div>
         <div className="home-article-systems-inner home-content"><span className="home-article-hover-bg" aria-hidden="true" /><span className="home-article-cursor" aria-hidden="true" />{featuredHomeArticles.map(({ article, headline }, index) => <button className="recent-article home-article-system-row" key={article.title} onClick={() => window.setTimeout(() => setSelectedArticle(article), prefersReducedMotion() ? 0 : 180)}><span className="recent-index">[ {String(index + 1).padStart(2, "0")} ]</span><h2>{headline}</h2><p><strong>{article.title}</strong></p></button>)}</div>
       </section>
       <section className="home-lower home-content">

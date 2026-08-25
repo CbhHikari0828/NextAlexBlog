@@ -5,18 +5,18 @@ import * as THREE from "three";
 function FallingPolyhedron() {
   const groupRef = useRef<THREE.Group>(null);
   const polyhedronRef = useRef<THREE.Group>(null);
+  const polyCoreGroupRef = useRef<THREE.Group>(null);
   const cubeRef = useRef<THREE.Group>(null);
+  const cubeCoreGroupRef = useRef<THREE.Group>(null);
   const morphProgressRef = useRef(0);
+  const travelProgressRef = useRef(0);
   const visualScaleRef = useRef(1);
-  const shellGlassMaterialRef = useRef<THREE.MeshPhysicalMaterial>(null);
-  const shellMaterialRef = useRef<THREE.MeshPhysicalMaterial>(null);
+  const spinRef = useRef(0);
   const edgeMaterialRef = useRef<THREE.LineBasicMaterial>(null);
   const coreMaterialRef = useRef<THREE.MeshPhysicalMaterial>(null);
-  const glowMaterialRef = useRef<THREE.MeshBasicMaterial>(null);
   const cubeShellMaterialRef = useRef<THREE.MeshPhysicalMaterial>(null);
   const cubeEdgeMaterialRef = useRef<THREE.LineBasicMaterial>(null);
   const cubeCoreMaterialRef = useRef<THREE.MeshPhysicalMaterial>(null);
-  const cubeGlowMaterialRef = useRef<THREE.MeshBasicMaterial>(null);
   const cubeLidMaterialRef = useRef<THREE.MeshPhysicalMaterial>(null);
   const cubeHighlightMaterialRef = useRef<THREE.MeshBasicMaterial>(null);
   const shellGeometry = useMemo(() => {
@@ -58,80 +58,101 @@ function FallingPolyhedron() {
     return geometry;
   }, []);
 
-  useFrame((state, delta) => {
+  useFrame((_, delta) => {
     if (!groupRef.current) return;
-    const rawMorphProgress = typeof document === "undefined"
-      ? 0
-      : Number.parseFloat(getComputedStyle(document.querySelector<HTMLElement>(".home-drop-visual") ?? document.documentElement).getPropertyValue("--drop-cube-progress"));
-    const rawVisualScale = typeof document === "undefined"
-      ? 1
-      : Number.parseFloat(getComputedStyle(document.querySelector<HTMLElement>(".home-drop-visual") ?? document.documentElement).getPropertyValue("--drop-visual-scale"));
+    const dropStyle = typeof document === "undefined"
+      ? undefined
+      : getComputedStyle(document.querySelector<HTMLElement>(".home-drop-visual") ?? document.documentElement);
+    const rawMorphProgress = Number.parseFloat(dropStyle?.getPropertyValue("--drop-cube-progress") ?? "0");
+    const rawVisualScale = Number.parseFloat(dropStyle?.getPropertyValue("--drop-visual-scale") ?? "1");
+    const rawTravelProgress = Number.parseFloat(dropStyle?.getPropertyValue("--drop-travel-progress") ?? "0");
     const targetMorphProgress = THREE.MathUtils.clamp(Number.isFinite(rawMorphProgress) ? rawMorphProgress : 0, 0, 1);
     const targetVisualScale = THREE.MathUtils.clamp(Number.isFinite(rawVisualScale) ? rawVisualScale : 1, 0.5, 1);
-    morphProgressRef.current = THREE.MathUtils.lerp(morphProgressRef.current, targetMorphProgress, Math.min(1, delta * 7.2));
-    visualScaleRef.current = THREE.MathUtils.lerp(visualScaleRef.current, targetVisualScale, Math.min(1, delta * 8.6));
-    const morphProgress = morphProgressRef.current * morphProgressRef.current * (3 - 2 * morphProgressRef.current);
-    const polyOpacity = 1 - morphProgress;
-    const cubeOpacity = morphProgress;
+    const targetTravelProgress = THREE.MathUtils.clamp(Number.isFinite(rawTravelProgress) ? rawTravelProgress : 0, 0, 1);
 
-    groupRef.current.position.x = morphProgress * 0.11;
+    morphProgressRef.current = THREE.MathUtils.damp(morphProgressRef.current, targetMorphProgress, 13, delta);
+    travelProgressRef.current = THREE.MathUtils.damp(travelProgressRef.current, targetTravelProgress, 12, delta);
+    visualScaleRef.current = THREE.MathUtils.damp(visualScaleRef.current, targetVisualScale, 14, delta);
+
+    if (Math.abs(morphProgressRef.current - targetMorphProgress) < 0.001) morphProgressRef.current = targetMorphProgress;
+    if (Math.abs(travelProgressRef.current - targetTravelProgress) < 0.001) travelProgressRef.current = targetTravelProgress;
+    if (Math.abs(visualScaleRef.current - targetVisualScale) < 0.001) visualScaleRef.current = targetVisualScale;
+
+    spinRef.current = (spinRef.current + delta * (0.34 + targetTravelProgress * 0.12)) % (Math.PI * 2);
+
+    const morphProgress = morphProgressRef.current * morphProgressRef.current * (3 - 2 * morphProgressRef.current);
+    const travelProgress = travelProgressRef.current;
+    const spin = spinRef.current;
+    const polyOpacity = 1 - morphProgress;
+    const polyShellOpacity = Math.pow(polyOpacity, 1.85);
+    const polyCoreOpacity = Math.pow(polyOpacity, 1.18);
+    const cubeOpacity = morphProgress;
+    const blueCoreCenterNudge = 0;
+    const morphCenterPhase = THREE.MathUtils.smoothstep(morphProgress, 0.5, 1);
+    const railCenterNudge = -0.085 * Math.sin(morphCenterPhase * Math.PI);
+
+    groupRef.current.position.x = railCenterNudge;
+    groupRef.current.position.y = 0;
     groupRef.current.scale.setScalar(visualScaleRef.current);
-    groupRef.current.rotation.x += delta * (0.42 + morphProgress * 0.2);
-    groupRef.current.rotation.y += delta * (0.58 + morphProgress * 0.18);
-    groupRef.current.rotation.z = Math.sin(state.clock.elapsedTime * 0.8) * 0.08 + morphProgress * 0.16;
+    groupRef.current.rotation.x = -0.3 + Math.sin(travelProgress * Math.PI * 1.2) * 0.07 + Math.sin(spin * 0.72) * 0.05 + morphProgress * 0.04;
+    groupRef.current.rotation.y = 0.02 + spin * 0.54 + Math.sin(travelProgress * Math.PI * 1.45) * 0.055 + morphProgress * 0.035;
+    groupRef.current.rotation.z = -0.12 + travelProgress * 0.5 + Math.sin(travelProgress * Math.PI * 1.1) * 0.035 + Math.sin(spin * 0.52) * 0.035;
 
     if (polyhedronRef.current) {
       polyhedronRef.current.visible = polyOpacity > 0.01;
       polyhedronRef.current.scale.setScalar(1 - morphProgress * 0.16);
-      polyhedronRef.current.rotation.x = morphProgress * 0.24;
-      polyhedronRef.current.rotation.y = -morphProgress * 0.18;
+      polyhedronRef.current.rotation.x = morphProgress * 0.08 + Math.sin(spin * 0.9) * 0.035;
+      polyhedronRef.current.rotation.y = -morphProgress * 0.06 + spin * 0.16;
+      polyhedronRef.current.rotation.z = Math.sin(spin * 0.6) * 0.035;
+    }
+
+    if (polyCoreGroupRef.current) {
+      polyCoreGroupRef.current.position.x = blueCoreCenterNudge * (1 - morphProgress * 0.56);
+      polyCoreGroupRef.current.position.y = 0;
+      polyCoreGroupRef.current.rotation.y = -spin * 0.18;
+      polyCoreGroupRef.current.rotation.z = spin * 0.08;
     }
 
     if (cubeRef.current) {
       cubeRef.current.visible = cubeOpacity > 0.01;
       cubeRef.current.position.x = 0;
-      cubeRef.current.position.y = morphProgress * -0.02;
+      cubeRef.current.position.y = 0;
       cubeRef.current.scale.setScalar(0.82 + morphProgress * 0.18);
-      cubeRef.current.rotation.x = -0.48 + (1 - morphProgress) * -0.18;
-      cubeRef.current.rotation.y = 0.62 + (1 - morphProgress) * 0.18;
-      cubeRef.current.rotation.z = -0.12 + Math.sin(state.clock.elapsedTime * 0.9) * 0.03;
+      cubeRef.current.rotation.x = -0.22 + (1 - morphProgress) * -0.06;
+      cubeRef.current.rotation.y = 0.04 + (1 - morphProgress) * 0.04 + spin * 0.12;
+      cubeRef.current.rotation.z = -0.04 + Math.sin(travelProgress * Math.PI * 1.28) * 0.018 + Math.sin(spin * 0.48) * 0.02;
     }
 
-    if (shellGlassMaterialRef.current) shellGlassMaterialRef.current.opacity = 0.18 * polyOpacity;
-    if (shellMaterialRef.current) shellMaterialRef.current.opacity = 0.48 * polyOpacity;
-    if (edgeMaterialRef.current) edgeMaterialRef.current.opacity = 0.34 * polyOpacity;
-    if (coreMaterialRef.current) coreMaterialRef.current.opacity = 0.92 * polyOpacity;
-    if (glowMaterialRef.current) glowMaterialRef.current.opacity = 0.42 * polyOpacity;
-    if (cubeShellMaterialRef.current) cubeShellMaterialRef.current.opacity = 0.22 * cubeOpacity;
-    if (cubeEdgeMaterialRef.current) cubeEdgeMaterialRef.current.opacity = 0.05 * cubeOpacity;
+    if (cubeCoreGroupRef.current) {
+      cubeCoreGroupRef.current.position.x = blueCoreCenterNudge;
+      cubeCoreGroupRef.current.position.y = 0;
+      cubeCoreGroupRef.current.rotation.y = -spin * 0.1;
+    }
+
+    if (edgeMaterialRef.current) edgeMaterialRef.current.opacity = 0.22 * polyShellOpacity;
+    if (coreMaterialRef.current) coreMaterialRef.current.opacity = 0.92 * polyCoreOpacity;
+    if (cubeShellMaterialRef.current) cubeShellMaterialRef.current.opacity = 0.16 * cubeOpacity;
+    if (cubeEdgeMaterialRef.current) cubeEdgeMaterialRef.current.opacity = 0.035 * cubeOpacity;
     if (cubeCoreMaterialRef.current) cubeCoreMaterialRef.current.opacity = cubeOpacity;
-    if (cubeGlowMaterialRef.current) cubeGlowMaterialRef.current.opacity = 0.16 * cubeOpacity;
     if (cubeLidMaterialRef.current) cubeLidMaterialRef.current.opacity = 0.82 * cubeOpacity;
     if (cubeHighlightMaterialRef.current) cubeHighlightMaterialRef.current.opacity = 0.18 * cubeOpacity;
   });
 
   return (
     <group ref={groupRef}>
-      <pointLight color="#38bdf8" intensity={44} distance={5.2} position={[0.1, 0.05, 0.42]} />
-      <pointLight color="#ffffff" intensity={11} distance={4.8} position={[-1.4, 1.3, 1.8]} />
-      <spotLight color="#ffffff" intensity={4.2} distance={7.5} angle={0.42} penumbra={0.86} position={[-2.2, 2.8, 3.4]} />
-      <directionalLight color="#e0f7ff" intensity={1.05} position={[-3.2, 2.2, 2.7]} />
+      <pointLight color="#38bdf8" intensity={3.2} distance={5.2} position={[0.1, 0.05, 0.42]} />
+      <pointLight color="#ffffff" intensity={4.5} distance={4.8} position={[-1.4, 1.3, 1.8]} />
+      <spotLight color="#ffffff" intensity={2.2} distance={7.5} angle={0.42} penumbra={0.86} position={[-2.2, 2.8, 3.4]} />
+      <directionalLight color="#e0f7ff" intensity={1.35} position={[-3.2, 2.2, 2.7]} />
       <group ref={polyhedronRef}>
-        <mesh geometry={shellGeometry} scale={1.08}>
-          <meshPhysicalMaterial ref={shellGlassMaterialRef} color="#eef1ef" transparent opacity={0.18} roughness={0.18} metalness={0.04} clearcoat={0.32} clearcoatRoughness={0.34} reflectivity={0.28} transmission={0.18} thickness={0.84} side={THREE.DoubleSide} depthWrite={false} />
-        </mesh>
-        <mesh geometry={shellGeometry}>
-          <meshPhysicalMaterial ref={shellMaterialRef} color="#d9dfde" transparent opacity={0.48} roughness={0.22} metalness={0.05} clearcoat={0.28} clearcoatRoughness={0.38} reflectivity={0.26} transmission={0.24} thickness={0.9} side={THREE.DoubleSide} depthWrite={false} />
-        </mesh>
         <lineSegments geometry={edgeGeometry}>
-          <lineBasicMaterial ref={edgeMaterialRef} color="#f2f4f2" transparent opacity={0.34} />
+          <lineBasicMaterial ref={edgeMaterialRef} color="#9bdcf2" transparent opacity={0.18} />
         </lineSegments>
-        <mesh geometry={coreGeometry} scale={0.9} rotation={[0.18, -0.3, 0.1]}>
-          <meshPhysicalMaterial ref={coreMaterialRef} color="#38bdf8" emissive="#0ea5e9" emissiveIntensity={0.68} roughness={0.48} metalness={0.08} clearcoat={0.22} clearcoatRoughness={0.46} reflectivity={0.22} transparent opacity={0.92} />
-        </mesh>
-        <mesh geometry={coreGeometry} scale={0.58} rotation={[-0.12, 0.5, -0.08]}>
-          <meshBasicMaterial ref={glowMaterialRef} color="#7dd3fc" transparent opacity={0.42} blending={THREE.AdditiveBlending} depthWrite={false} />
-        </mesh>
+        <group ref={polyCoreGroupRef}>
+          <mesh geometry={coreGeometry} scale={0.9} rotation={[0.18, -0.3, 0.1]}>
+            <meshPhysicalMaterial ref={coreMaterialRef} color="#24afe0" emissive="#078dcc" emissiveIntensity={0.08} roughness={0.42} metalness={0.08} clearcoat={0.22} clearcoatRoughness={0.46} reflectivity={0.22} transparent opacity={0.92} />
+          </mesh>
+        </group>
       </group>
       <group ref={cubeRef} visible={false}>
         <mesh geometry={cubeGeometry} scale={[1.22, 1.22, 1.22]} rotation={[0.04, -0.05, 0.02]}>
@@ -140,18 +161,17 @@ function FallingPolyhedron() {
         <lineSegments geometry={cubeEdgeGeometry}>
           <lineBasicMaterial ref={cubeEdgeMaterialRef} color="#f5fcff" transparent opacity={0} />
         </lineSegments>
-        <mesh geometry={cubeCoreGeometry} position={[0.18, -0.26, 0.1]} rotation={[0.02, -0.04, 0.01]}>
-          <meshPhysicalMaterial ref={cubeCoreMaterialRef} color="#0284c7" emissive="#0ea5e9" emissiveIntensity={0.22} roughness={0.34} metalness={0.1} clearcoat={0.34} clearcoatRoughness={0.28} reflectivity={0.3} transparent opacity={0} />
-        </mesh>
-        <mesh geometry={cubeLidGeometry} scale={[1.08, 1, 1.08]} position={[-0.42, 1.42, 0.16]} rotation={[0.05, -0.08, -0.04]}>
-          <meshPhysicalMaterial ref={cubeLidMaterialRef} color="#7dd3fc" emissive="#38bdf8" emissiveIntensity={0.38} roughness={0.26} metalness={0.08} clearcoat={0.3} clearcoatRoughness={0.3} reflectivity={0.28} transparent opacity={0} depthWrite={false} />
-        </mesh>
-        <mesh geometry={cubeHighlightGeometry} position={[0.01, 0.34, 1.02]} rotation={[0.18, 0.04, -0.5]}>
-          <meshBasicMaterial ref={cubeHighlightMaterialRef} color="#ffffff" transparent opacity={0} blending={THREE.AdditiveBlending} depthWrite={false} />
-        </mesh>
-        <mesh geometry={cubeCoreGeometry} scale={[0.5, 0.5, 0.5]} position={[0.18, -0.26, 0.1]}>
-          <meshBasicMaterial ref={cubeGlowMaterialRef} color="#7dd3fc" transparent opacity={0} blending={THREE.AdditiveBlending} depthWrite={false} />
-        </mesh>
+        <group ref={cubeCoreGroupRef}>
+          <mesh geometry={cubeCoreGeometry} position={[0, -0.24, 0.04]} rotation={[0.02, -0.04, 0.01]}>
+            <meshPhysicalMaterial ref={cubeCoreMaterialRef} color="#0284c7" emissive="#0ea5e9" emissiveIntensity={0.22} roughness={0.34} metalness={0.1} clearcoat={0.34} clearcoatRoughness={0.28} reflectivity={0.3} transparent opacity={0} />
+          </mesh>
+          <mesh geometry={cubeLidGeometry} scale={[1.08, 1, 1.08]} position={[0, 1.36, 0.12]} rotation={[0.05, -0.04, -0.02]}>
+            <meshPhysicalMaterial ref={cubeLidMaterialRef} color="#7dd3fc" emissive="#38bdf8" emissiveIntensity={0.38} roughness={0.26} metalness={0.08} clearcoat={0.3} clearcoatRoughness={0.3} reflectivity={0.28} transparent opacity={0} depthWrite={false} />
+          </mesh>
+          <mesh geometry={cubeHighlightGeometry} position={[0, 0.34, 1.02]} rotation={[0.18, 0.02, -0.42]}>
+            <meshBasicMaterial ref={cubeHighlightMaterialRef} color="#ffffff" transparent opacity={0} depthWrite={false} />
+          </mesh>
+        </group>
       </group>
     </group>
   );
@@ -159,9 +179,9 @@ function FallingPolyhedron() {
 
 export default function HomeDropScene() {
   return (
-    <Canvas className="home-drop-canvas" camera={{ position: [0, 0, 4.6], fov: 42 }} dpr={[1, 1.8]} gl={{ alpha: true, antialias: true, preserveDrawingBuffer: true }}>
-      <ambientLight intensity={1.8} />
-      <directionalLight color="#ffffff" intensity={2.1} position={[2.5, 3, 4]} />
+    <Canvas className="home-drop-canvas" camera={{ position: [0, 0, 5], fov: 42 }} dpr={[1, 1.8]} gl={{ alpha: true, antialias: true, preserveDrawingBuffer: true }}>
+      <ambientLight intensity={0.55} />
+      <directionalLight color="#ffffff" intensity={1.4} position={[2.5, 3, 4]} />
       <FallingPolyhedron />
     </Canvas>
   );
