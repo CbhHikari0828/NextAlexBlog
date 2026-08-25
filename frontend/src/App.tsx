@@ -176,6 +176,15 @@ const homeTechLandmarks: { kind: HomeTechLandmarkKind; color: string; top: strin
   { kind: "postgresql", color: "#336791", top: "250vh" },
 ];
 
+const homeStoryCards: { view: Exclude<View, "home">; step: string; label: string; title: string; body: string }[] = [
+  { view: "articles", step: "01", label: "/articles", title: "技术文章", body: "沉淀 Java 并发、后端工程和项目复盘。" },
+  { view: "notes", step: "02", label: "/notes", title: "日常笔记", body: "记录阅读、灵感和阶段性的学习碎片。" },
+  { view: "gallery", step: "03", label: "/gallery", title: "创作图库", body: "整理 AI 图片作品、模型和完整提示词。" },
+  { view: "studio", step: "04", label: "/studio", title: "创作中心", body: "同步 GitHub 项目，管理文章、图片和作品数据。" },
+  { view: "entertainment", step: "05", label: "/entertainment", title: "娱乐专栏", body: "放游戏、音乐和后续扩展的兴趣内容。" },
+  { view: "guestbook", step: "06", label: "/guestbook", title: "留言板", body: "给访客留下简短反馈和交流入口。" },
+];
+
 function noteRecordToNote(record: NoteRecord): Note | null {
   const title = record.title.trim();
   const markdown = record.content.trim();
@@ -982,22 +991,6 @@ function PageStage({ view, children }: { view: View; children: ReactNode }) {
   return <div className={`page-stage page-stage-${view}`} ref={stageRef}>{children}</div>;
 }
 
-function HomeTechIcon({ kind }: { kind: HomeTechLandmarkKind }) {
-  if (kind === "java") {
-    return <svg viewBox="0 0 48 48" aria-hidden="true"><path d="M18 8c6 4-1 6 4 10 4 3 4 6-1 9 8-2 11-7 7-11-3-3-6-4-3-8-5 2-8 4-7 7Z" fill="currentColor" opacity=".92" /><path d="M12 29h24l-2 8H14l-2-8Zm4 11h16" fill="none" stroke="currentColor" strokeLinecap="round" strokeWidth="3" /><path d="M9 26c5 3 25 3 30 0" fill="none" stroke="currentColor" strokeLinecap="round" strokeWidth="2" opacity=".65" /></svg>;
-  }
-
-  if (kind === "go") {
-    return <svg viewBox="0 0 48 48" aria-hidden="true"><path d="M8 25c0-10 6-16 16-16s16 6 16 16-6 15-16 15S8 35 8 25Z" fill="currentColor" opacity=".92" /><path d="M15 20h5m8 0h5M18 28c2 3 10 3 12 0" fill="none" stroke="#123654" strokeLinecap="round" strokeWidth="3" /><circle cx="18" cy="23" r="2" fill="#123654" /><circle cx="30" cy="23" r="2" fill="#123654" /></svg>;
-  }
-
-  if (kind === "rust") {
-    return <svg viewBox="0 0 48 48" aria-hidden="true"><path d="m24 6 3 3 4-1 2 4 4 1-1 4 3 3-3 3 1 4-4 2-1 4-4-1-4 3-3-3-4 1-2-4-4-1 1-4-3-3 3-3-1-4 4-2 1-4 4 1 4-3Z" fill="currentColor" opacity=".94" /><path d="M17 32V17h8c4 0 7 2 7 6 0 2-1 4-3 5l4 4h-5l-3-3h-3v3h-5Zm5-7h3c1 0 2-1 2-2s-1-2-2-2h-3v4Z" fill="#54230e" /></svg>;
-  }
-
-  return <svg viewBox="0 0 48 48" aria-hidden="true"><path d="M12 18c0-5 5-9 12-9s12 4 12 9v14c0 5-5 9-12 9s-12-4-12-9V18Z" fill="currentColor" opacity=".9" /><path d="M12 18c0 5 5 8 12 8s12-3 12-8-5-9-12-9-12 4-12 9Z" fill="none" stroke="#062f57" strokeWidth="2.5" /><path d="M18 29c2-3 10-3 12 0M19 34h10" fill="none" stroke="#062f57" strokeLinecap="round" strokeWidth="2.5" /></svg>;
-}
-
 function Home({ navigate, setSelectedArticle, repositories, repositoryState }: { navigate: (view: View) => void; setSelectedArticle: (article: Article) => void; repositories: GitHubRepositories | null; repositoryState: RepositoryState }) {
   const profileName = "NextAlex";
   const [displayedName, setDisplayedName] = useState("");
@@ -1007,6 +1000,41 @@ function Home({ navigate, setSelectedArticle, repositories, repositoryState }: {
     headline: ["并发秩序", "线程池生命周期", "异步编排", "Redis 锁边界", "集合取舍"][index] ?? article.series,
   }));
   const homeRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const root = homeRef.current;
+    if (!root) return;
+
+    const compactQuery = window.matchMedia("(max-width: 800px)");
+    let isCompact = compactQuery.matches;
+    const getTrackHeight = () => Math.round(Math.max(isCompact ? 2200 : 3000, window.innerHeight * (isCompact ? 3.2 : 3.8)));
+    let trackHeight = getTrackHeight();
+    let frame = 0;
+
+    root.style.setProperty("--home-drop-track-height", `${trackHeight}px`);
+
+    const syncTrackHeight = () => {
+      window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(() => {
+        const nextIsCompact = compactQuery.matches;
+        if (nextIsCompact !== isCompact) {
+          isCompact = nextIsCompact;
+          trackHeight = getTrackHeight();
+        } else {
+          trackHeight = Math.max(trackHeight, getTrackHeight());
+        }
+        root.style.setProperty("--home-drop-track-height", `${trackHeight}px`);
+        ScrollTrigger.refresh();
+      });
+    };
+
+    window.addEventListener("resize", syncTrackHeight);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.removeEventListener("resize", syncTrackHeight);
+      root.style.removeProperty("--home-drop-track-height");
+    };
+  }, []);
 
   useEffect(() => {
     let nextCharacter = 0;
@@ -1028,7 +1056,6 @@ function Home({ navigate, setSelectedArticle, repositories, repositoryState }: {
     const heroContent = root.querySelector<HTMLElement>(".hero-content");
     const avatar = root.querySelector<HTMLElement>(".profile-avatar");
     const profileItems = Array.from(root.querySelectorAll<HTMLElement>(".profile-copy > *"));
-    const recentItems = Array.from(root.querySelectorAll<HTMLElement>(".recent-article"));
     const articleSystemInner = root.querySelector<HTMLElement>(".home-article-systems-inner");
     const articleHoverBg = root.querySelector<HTMLElement>(".home-article-hover-bg");
     const articleCursor = root.querySelector<HTMLElement>(".home-article-cursor");
@@ -1037,8 +1064,9 @@ function Home({ navigate, setSelectedArticle, repositories, repositoryState }: {
     const dropObject = root.querySelector<HTMLElement>(".home-drop-object");
     const dropVisual = root.querySelector<HTMLElement>(".home-drop-visual") ?? dropObject;
     const articleSystems = root.querySelector<HTMLElement>(".home-article-systems");
-    const lowerPanels = Array.from(root.querySelectorAll<HTMLElement>(".home-lower > *"));
-    const lowerSection = root.querySelector<HTMLElement>(".home-lower");
+    const storySection = root.querySelector<HTMLElement>(".home-horizontal-story");
+    const storyViewport = root.querySelector<HTMLElement>(".home-horizontal-story-viewport");
+    const storyTrack = root.querySelector<HTMLElement>(".home-horizontal-story-track");
     const media = gsap.matchMedia();
 
     media.add("(prefers-reduced-motion: no-preference)", () => {
@@ -1173,37 +1201,6 @@ function Home({ navigate, setSelectedArticle, repositories, repositoryState }: {
         cleanup.push(() => gsap.killTweensOf(dropVisual));
       }
 
-      recentItems.forEach((item) => {
-        ScrollTrigger.create({
-          trigger: item,
-          start: "top 86%",
-          once: true,
-          onEnter: () => gsap.fromTo(item, { autoAlpha: 0, y: 24 }, {
-            autoAlpha: 1,
-            y: 0,
-            duration: 0.58,
-            ease: "power3.out",
-            clearProps: "transform,opacity,visibility",
-          }),
-        });
-      });
-
-      if (lowerSection && lowerPanels.length > 0) {
-        ScrollTrigger.create({
-          trigger: lowerSection,
-          start: "top 84%",
-          once: true,
-          onEnter: () => gsap.fromTo(lowerPanels, { autoAlpha: 0, y: 28 }, {
-            autoAlpha: 1,
-            y: 0,
-            duration: 0.62,
-            ease: "power3.out",
-            stagger: 0.12,
-            clearProps: "transform,opacity,visibility",
-          }),
-        });
-      }
-
       return () => cleanup.forEach((release) => release());
     });
 
@@ -1219,6 +1216,53 @@ function Home({ navigate, setSelectedArticle, repositories, repositoryState }: {
         },
       })
         .to(background, { autoAlpha: 0.16, scale: 1.07, filter: "blur(7px)", ease: "none" }, 0);
+    });
+
+    media.add("(min-width: 981px) and (prefers-reduced-motion: no-preference)", () => {
+      if (!storySection || !storyViewport || !storyTrack) return;
+
+      const getDistance = () => Math.max(0, storyTrack.scrollWidth - storyViewport.clientWidth);
+      const storyRevealTween = gsap.fromTo(storyTrack, {
+        autoAlpha: 0.9,
+        y: 14,
+      }, {
+        autoAlpha: 1,
+        y: 0,
+        ease: "none",
+        scrollTrigger: {
+          trigger: storySection,
+          start: "top 78%",
+          end: "top 30%",
+          scrub: 0.7,
+          invalidateOnRefresh: true,
+          refreshPriority: 7,
+        },
+      });
+      const storyTween = gsap.to(storyTrack, {
+        x: () => -getDistance(),
+        ease: "none",
+        scrollTrigger: {
+          trigger: storySection,
+          start: "top 12%",
+          end: () => `+=${Math.max(getDistance(), window.innerHeight * 0.85)}`,
+          scrub: 0.8,
+          pin: true,
+          anticipatePin: 1,
+          invalidateOnRefresh: true,
+          refreshPriority: 8,
+          onRefresh: () => {
+            if (getDistance() <= 1) gsap.set(storyTrack, { x: 0 });
+          },
+        },
+      });
+
+      return () => {
+        storyRevealTween.scrollTrigger?.kill();
+        storyRevealTween.kill();
+        storyTween.scrollTrigger?.kill();
+        storyTween.kill();
+        gsap.set(storyTrack, { clearProps: "transform,opacity,visibility" });
+      };
     });
 
     return () => media.revert();
@@ -1250,8 +1294,7 @@ function Home({ navigate, setSelectedArticle, repositories, repositoryState }: {
           <div className="home-drop-landmarks" aria-hidden="true">
             {homeTechLandmarks.map((landmark, index) => <div className={`home-drop-landmark home-drop-landmark-${index % 2 === 0 ? "left" : "right"}`} key={landmark.kind} style={{ "--landmark-top": landmark.top } as CSSProperties}>
               <div className="home-drop-landmark-bubble">
-                <HomeTechLandmarkScene color={landmark.color} />
-                <span className={`home-drop-landmark-mark home-drop-landmark-mark-${landmark.kind}`}><HomeTechIcon kind={landmark.kind} /></span>
+                <HomeTechLandmarkScene kind={landmark.kind} color={landmark.color} />
               </div>
             </div>)}
           </div>
@@ -1259,7 +1302,17 @@ function Home({ navigate, setSelectedArticle, repositories, repositoryState }: {
         </div>
       </section>
       <section className="recent-section home-article-systems" aria-label="首页文章展示">
-        <div className="home-article-systems-inner home-content"><span className="home-article-hover-bg" aria-hidden="true" /><span className="home-article-cursor" aria-hidden="true" />{featuredHomeArticles.map(({ article, headline }, index) => <button className="recent-article home-article-system-row" key={article.title} onClick={() => window.setTimeout(() => setSelectedArticle(article), prefersReducedMotion() ? 0 : 180)}><span className="recent-index">[ {String(index + 1).padStart(2, "0")} ]</span><h2>{headline}</h2><p><strong>{article.title}</strong></p></button>)}</div>
+        <div className="home-article-systems-inner home-content"><span className="home-article-hover-bg" aria-hidden="true" /><span className="home-article-cursor" aria-hidden="true" />{featuredHomeArticles.map(({ article, headline }, index) => <button className="home-article-system-row" key={article.title} onClick={() => window.setTimeout(() => setSelectedArticle(article), prefersReducedMotion() ? 0 : 180)}><span className="recent-index">[ {String(index + 1).padStart(2, "0")} ]</span><h2>{headline}</h2><p><strong>{article.title}</strong></p></button>)}</div>
+      </section>
+      <section className="home-horizontal-story" aria-label="首页栏目导览">
+        <div className="home-horizontal-story-inner home-content">
+          <div className="home-horizontal-story-head"><span>[ 栏目导览 ]</span><p>沿着主导航继续浏览</p></div>
+          <div className="home-horizontal-story-viewport">
+            <div className="home-horizontal-story-track">
+              {homeStoryCards.map((item) => <button className="home-horizontal-story-panel" key={item.view} onClick={() => navigate(item.view)} type="button"><span>{item.step}</span><small>{item.label}</small><h2>{item.title}</h2><p>{item.body}</p></button>)}
+            </div>
+          </div>
+        </div>
       </section>
       <section className="home-lower home-content">
         <div><div className="section-heading compact"><div><h2>创作项目</h2></div><button className="text-action" onClick={() => navigate("studio")}>进入创作中心 <span>↗</span></button></div><div className="home-project-grid">{repositoryState === "ready" && projects.length > 0 ? projects.slice(0, 2).map((project) => <RepositoryProjectCard className="home-project-card" key={project.htmlUrl} project={project} username={repositories?.username || "GitHub"} />) : <p className="home-project-empty">{repositoryState === "loading" ? "正在同步 GitHub 项目" : "GitHub 项目暂不可用"}</p>}</div></div>
