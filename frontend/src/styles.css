@@ -6,6 +6,16 @@ body { margin: 0; min-width: 320px; overflow-y: clip; }
 button, input, textarea { font: inherit; }
 button { cursor: pointer; }
 button, a { -webkit-tap-highlight-color: transparent; }
+.global-cursor { display: none; }
+@media (hover: hover) and (pointer: fine) {
+  .app-shell, .app-shell a, .app-shell button, .app-shell label, .app-shell summary, .app-shell [role="button"], .app-shell [role="tab"] { cursor: none; }
+  .app-shell input, .app-shell textarea, .app-shell select, .app-shell [contenteditable="true"] { cursor: text; }
+  .global-cursor { position: fixed; z-index: 90; top: 0; left: 0; display: block; width: 22px; height: 22px; border-radius: 999px; background-color: #1677ff; box-shadow: 0 10px 24px rgba(22, 119, 255, .24); pointer-events: none; transition: width .18s ease, height .18s ease, border-radius .18s ease, background-color .16s ease, box-shadow .18s ease; will-change: transform, opacity, width, height; }
+  .global-cursor.is-light { background-color: #ffffff !important; box-shadow: 0 10px 24px rgba(255, 255, 255, .2); }
+  .global-cursor.is-hovering { width: 28px; height: 28px; }
+  .global-cursor.is-pressing { width: 18px; height: 18px; }
+  .global-cursor.is-text { width: 6px; height: 24px; border-radius: 999px; opacity: .5; }
+}
 .developer-tools-notice { position: fixed; z-index: 30; top: 0; right: 0; left: 0; padding: 9px 24px; color: #3f3513; background: #f3cd57; box-shadow: 0 2px 9px rgba(67, 55, 17, .18); font-size: .78rem; font-weight: 700; letter-spacing: 0; line-height: 1.35; text-align: center; }
 .site-loading-screen { position: fixed; z-index: 100; inset: 0; overflow: hidden; background: #ffffff; }
 .site-loader { position: absolute; top: 50%; left: 50%; margin-left: -50px; animation: site-speeder .4s linear infinite; }
@@ -127,14 +137,12 @@ button, a { -webkit-tap-highlight-color: transparent; }
 .home-drop-canvas { width: 100% !important; height: 100% !important; display: block; }
 .home-drop-target { position: absolute; right: 10%; bottom: 0; left: 10%; height: 1px; background: rgba(22, 119, 255, .22); transform-origin: center; }
 .recent-section { position: relative; z-index: 1; padding: 16px 0 0; }
-.home-article-systems { --home-article-accent: #1677ff; position: relative; z-index: 10; width: 100%; background: var(--home-article-accent); background-image: radial-gradient(rgba(0, 0, 0, .1) .7px, transparent .7px); background-size: 4px 4px; }
-.home-article-systems::after { content: ""; position: absolute; right: 0; bottom: 0; left: 0; height: clamp(72px, 8.5vw, 124px); background: radial-gradient(70% 135% at 50% 100%, rgba(255, 255, 255, .16), rgba(255, 255, 255, 0) 68%), linear-gradient(180deg, rgba(22, 119, 255, 0), rgba(255, 255, 255, .08)); pointer-events: none; }
+.home-article-systems { --home-article-accent: #1677ff; position: relative; z-index: 10; width: 100%; margin-bottom: -1px; background: var(--home-article-accent); background-image: radial-gradient(rgba(0, 0, 0, .1) .7px, transparent .7px); background-size: 4px 4px; }
+.home-article-systems::after { content: ""; position: absolute; right: 0; bottom: -2px; left: 0; height: 4px; background: var(--home-article-accent); pointer-events: none; }
 .home-article-systems-inner.home-content { width: min(100% - 96px, 1800px); }
 .home-article-systems-inner { position: relative; padding: 22px 0 clamp(76px, 8vw, 116px); }
 .home-article-systems-inner.is-hovering { cursor: none; }
 .home-article-hover-bg { position: absolute; z-index: 0; top: 0; right: 0; left: 0; height: 94px; background: #050505; opacity: 0; pointer-events: none; transform-origin: top center; will-change: transform, height, opacity; }
-.home-article-cursor { position: absolute; z-index: 0; top: 0; left: 0; display: block; width: 26px; height: 26px; border-radius: 50%; background: #050505; opacity: 0; pointer-events: none; transition: background-color .16s ease; will-change: transform, opacity; }
-.home-article-cursor.is-over-dark { background: #ffffff; }
 .home-article-system-row { position: relative; z-index: 1; display: grid; grid-template-columns: clamp(220px, 25vw, 460px) minmax(260px, 1fr) minmax(320px, .74fr); align-items: center; gap: 34px; width: 100%; min-height: 94px; padding: 18px 0; border: 0; border-top: 1px solid #0c0b08; color: #070706; background: transparent; text-align: left; cursor: pointer; transition: color .2s ease, background-color .2s ease; will-change: transform, opacity; }
 .home-article-system-row:first-child { border-top: 1px solid #0c0b08; }
 .home-article-system-row.is-active { color: var(--home-article-accent); }
@@ -144,8 +152,8 @@ button, a { -webkit-tap-highlight-color: transparent; }
 .home-article-system-row p strong { display: block; margin-bottom: 5px; color: currentColor; font-family: "Microsoft YaHei", "Noto Sans SC", Inter, ui-sans-serif, system-ui, sans-serif; font-size: .82rem; font-weight: 850; line-height: 1.35; text-transform: none; }
 .home-article-system-row:hover, .home-article-system-row.is-active { color: var(--home-article-accent); }
 .home-article-system-row:hover h2, .home-article-system-row.is-active h2 { color: currentColor; }
-.home-horizontal-story { --home-article-accent: #1677ff; position: relative; z-index: 9; overflow: hidden; margin-top: -1px; color: #070706; background: linear-gradient(180deg, #1677ff 0%, #126ff4 52%, #1677ff 100%); background-image: radial-gradient(rgba(0, 0, 0, .1) .7px, transparent .7px), linear-gradient(180deg, #1677ff 0%, #126ff4 52%, #1677ff 100%); background-size: 4px 4px, 100% 100%; }
-.home-horizontal-story::before { content: ""; position: absolute; top: 0; right: clamp(32px, 5vw, 96px); left: clamp(32px, 5vw, 96px); height: 1px; background: linear-gradient(90deg, transparent, rgba(7, 7, 6, .38), transparent); opacity: .8; pointer-events: none; }
+.home-horizontal-story { --home-article-accent: #1677ff; position: relative; z-index: 9; overflow: hidden; margin-top: 0; color: #070706; background: var(--home-article-accent); background-image: radial-gradient(rgba(0, 0, 0, .1) .7px, transparent .7px); background-size: 4px 4px; }
+.pin-spacer:has(> .home-horizontal-story) { background: #1677ff; background-image: radial-gradient(rgba(0, 0, 0, .1) .7px, transparent .7px); background-size: 4px 4px; }
 .home-horizontal-story-inner.home-content { width: min(100% - 96px, 1800px); }
 .home-horizontal-story-inner { padding: clamp(32px, 4.6vw, 70px) 0 78px; border-top: 0; }
 .home-horizontal-story-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; padding: 0 0 22px; }

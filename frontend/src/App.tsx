@@ -626,6 +626,88 @@ function SiteLoader() {
   </div>;
 }
 
+function parseRgbColor(color: string): { r: number; g: number; b: number; a: number } | null {
+  const match = color.match(/rgba?\(([^)]+)\)/i);
+  if (!match) return null;
+  const parts = match[1].split(",").map((part) => part.trim());
+  if (parts.length < 3) return null;
+  const [r, g, b] = parts.slice(0, 3).map((part) => Number.parseFloat(part));
+  const a = parts[3] === undefined ? 1 : Number.parseFloat(parts[3]);
+  if (![r, g, b, a].every(Number.isFinite)) return null;
+  return { r, g, b, a };
+}
+
+function shouldUseLightCursor(target: Element | null) {
+  const forcedLightArea = target?.closest(".home-article-systems, .home-horizontal-story, .site-footer, .home-folder-widget, .guestbook-submit-form, .steam-summary-card, .steam-game-stat, .music-card, .note-wobble-card");
+  if (forcedLightArea) return true;
+
+  let element: Element | null = target;
+  let depth = 0;
+  while (element && depth < 8) {
+    const style = window.getComputedStyle(element);
+    const color = parseRgbColor(style.backgroundColor);
+    if (color && color.a > 0.38) {
+      const luminance = color.r * 0.2126 + color.g * 0.7152 + color.b * 0.0722;
+      const blueDominant = color.b > color.r + 55 && color.b > color.g + 25;
+      return luminance < 145 || blueDominant;
+    }
+    element = element.parentElement;
+    depth += 1;
+  }
+
+  return false;
+}
+
+function GlobalCursor() {
+  const cursorRef = useRef<HTMLSpanElement>(null);
+
+  useEffect(() => {
+    const cursor = cursorRef.current;
+    if (!cursor) return;
+    const finePointer = window.matchMedia("(hover: hover) and (pointer: fine)");
+    if (!finePointer.matches) return;
+
+    gsap.set(cursor, { xPercent: -50, yPercent: -50, autoAlpha: 0, scale: 0.72 });
+    const cursorX = gsap.quickTo(cursor, "x", { duration: 0.24, ease: "power3.out" });
+    const cursorY = gsap.quickTo(cursor, "y", { duration: 0.24, ease: "power3.out" });
+
+    const updateCursorContext = (event: PointerEvent) => {
+      const target = document.elementFromPoint(event.clientX, event.clientY);
+      const interactive = target?.closest("a, button, label, summary, [role='button'], [role='tab'], input, textarea, select");
+      const textInput = target?.closest("input, textarea, select, [contenteditable='true']");
+      cursor.classList.toggle("is-light", shouldUseLightCursor(target));
+      cursor.classList.toggle("is-hovering", Boolean(interactive && !textInput));
+      cursor.classList.toggle("is-text", Boolean(textInput));
+    };
+
+    const showCursor = () => gsap.to(cursor, { autoAlpha: 1, scale: 1, duration: 0.18, ease: "power2.out", overwrite: "auto" });
+    const hideCursor = () => gsap.to(cursor, { autoAlpha: 0, scale: 0.72, duration: 0.18, ease: "power2.out", overwrite: "auto" });
+    const moveCursor = (event: PointerEvent) => {
+      cursorX(event.clientX);
+      cursorY(event.clientY);
+      showCursor();
+      updateCursorContext(event);
+    };
+    const pressCursor = () => cursor.classList.add("is-pressing");
+    const releaseCursor = () => cursor.classList.remove("is-pressing");
+
+    window.addEventListener("pointermove", moveCursor, { passive: true });
+    window.addEventListener("pointerdown", pressCursor, { passive: true });
+    window.addEventListener("pointerup", releaseCursor, { passive: true });
+    document.addEventListener("pointerleave", hideCursor);
+
+    return () => {
+      window.removeEventListener("pointermove", moveCursor);
+      window.removeEventListener("pointerdown", pressCursor);
+      window.removeEventListener("pointerup", releaseCursor);
+      document.removeEventListener("pointerleave", hideCursor);
+      gsap.killTweensOf(cursor);
+    };
+  }, []);
+
+  return <span className="global-cursor" aria-hidden="true" ref={cursorRef} />;
+}
+
 function PublicApp() {
   const [view, setView] = useState<View>("home");
   const [apiState, setApiState] = useState<ApiState>("checking");
@@ -910,6 +992,7 @@ function PublicApp() {
 
   return (
     <main className={`app-shell${view === "home" ? " home-shell" : ""}${view === "articles" ? " articles-shell" : ""}${view === "notes" ? " notes-shell" : ""}${view === "gallery" ? " gallery-shell" : ""}${view === "studio" ? " studio-shell" : ""}${view === "entertainment" ? " entertainment-shell" : ""}${view === "guestbook" ? " guestbook-shell" : ""}`}>
+      <GlobalCursor />
       {(copyNoticeVisible || developerToolsOpen) && <div className="developer-tools-notice" role="status">{copyNoticeVisible ? "复制已完成，转载请标明出处" : "开发者模式已打开，请遵循 GPL 协议"}</div>}
       <header className="site-header">
         <button className="brand" onClick={() => navigate("home")} aria-label="返回首页">
@@ -1158,6 +1241,7 @@ function Home({ navigate, setSelectedArticle, repositories, repositoryState }: {
         dropVisual.style.setProperty("--drop-visual-scale", String(dropStartScale));
         dropVisual.style.setProperty("--drop-cube-progress", "0");
         dropVisual.style.setProperty("--drop-travel-progress", "0");
+
         const measureDropTravel = () => {
           const ballRect = dropVisual.getBoundingClientRect();
           const articleRect = articleSystems.getBoundingClientRect();
@@ -1176,6 +1260,7 @@ function Home({ navigate, setSelectedArticle, repositories, repositoryState }: {
           dropVisual.style.setProperty("--drop-visual-scale", String(nextScale));
           dropVisual.style.setProperty("--drop-cube-progress", String(morphProgress));
           dropVisual.style.setProperty("--drop-travel-progress", String(travelProgress));
+          return { articleRect, travelProgress };
         };
 
         measureDropTravel();
@@ -1185,7 +1270,8 @@ function Home({ navigate, setSelectedArticle, repositories, repositoryState }: {
           end: "bottom top",
           onRefresh: measureDropTravel,
           onUpdate: () => {
-            const articleTop = articleSystems.getBoundingClientRect().top;
+            const { articleRect } = syncDropScale();
+            const articleTop = articleRect.top;
             if (articleTop <= 0 && !dropHiddenByArticle) {
               dropHiddenByArticle = true;
               gsap.to(dropVisual, { autoAlpha: 0, duration: 0.16, ease: "power2.out", overwrite: "auto" });
@@ -1193,7 +1279,6 @@ function Home({ navigate, setSelectedArticle, repositories, repositoryState }: {
               dropHiddenByArticle = false;
               gsap.to(dropVisual, { autoAlpha: 1, duration: 0.16, ease: "power2.out", overwrite: "auto" });
             }
-            syncDropScale();
           },
         });
 
@@ -1302,7 +1387,7 @@ function Home({ navigate, setSelectedArticle, repositories, repositoryState }: {
         </div>
       </section>
       <section className="recent-section home-article-systems" aria-label="首页文章展示">
-        <div className="home-article-systems-inner home-content"><span className="home-article-hover-bg" aria-hidden="true" /><span className="home-article-cursor" aria-hidden="true" />{featuredHomeArticles.map(({ article, headline }, index) => <button className="home-article-system-row" key={article.title} onClick={() => window.setTimeout(() => setSelectedArticle(article), prefersReducedMotion() ? 0 : 180)}><span className="recent-index">[ {String(index + 1).padStart(2, "0")} ]</span><h2>{headline}</h2><p><strong>{article.title}</strong></p></button>)}</div>
+        <div className="home-article-systems-inner home-content"><span className="home-article-hover-bg" aria-hidden="true" />{featuredHomeArticles.map(({ article, headline }, index) => <button className="home-article-system-row" key={article.title} onClick={() => window.setTimeout(() => setSelectedArticle(article), prefersReducedMotion() ? 0 : 180)}><span className="recent-index">[ {String(index + 1).padStart(2, "0")} ]</span><h2>{headline}</h2><p><strong>{article.title}</strong></p></button>)}</div>
       </section>
       <section className="home-horizontal-story" aria-label="首页栏目导览">
         <div className="home-horizontal-story-inner home-content">
