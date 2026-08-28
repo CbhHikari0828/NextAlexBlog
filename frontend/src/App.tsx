@@ -1,4 +1,4 @@
-import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import { useGSAP } from "@gsap/react";
 import { gsap } from "gsap";
@@ -11,6 +11,7 @@ import remarkGfm from "remark-gfm";
 import AdminApp from "./AdminApp";
 import HomeDropScene from "./components/HomeDropScene";
 import HomeTechLandmarkScene from "./components/HomeTechLandmarkScene";
+import TravelTraceMap from "./components/TravelTraceMap";
 
 gsap.registerPlugin(useGSAP, ScrollTrigger);
 
@@ -594,6 +595,25 @@ const categories = ["全部文章", "Java 并发编程", "JUC 基础", "异步�
 function App() {
   const [showLoader, setShowLoader] = useState(true);
 
+  useLayoutEffect(() => {
+    if (window.location.pathname.startsWith("/admin")) return;
+
+    const canControlScrollRestoration = "scrollRestoration" in window.history;
+    const previousScrollRestoration = canControlScrollRestoration ? window.history.scrollRestoration : "auto";
+    if (canControlScrollRestoration) window.history.scrollRestoration = "manual";
+
+    const resetToFirstScreen = () => window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+    resetToFirstScreen();
+    const resetTimers = [window.setTimeout(resetToFirstScreen, 0), window.setTimeout(resetToFirstScreen, 120)];
+    window.addEventListener("pageshow", resetToFirstScreen);
+
+    return () => {
+      resetTimers.forEach((timer) => window.clearTimeout(timer));
+      window.removeEventListener("pageshow", resetToFirstScreen);
+      if (canControlScrollRestoration) window.history.scrollRestoration = previousScrollRestoration;
+    };
+  }, []);
+
   useEffect(() => {
     const startedAt = performance.now();
     let completed = false;
@@ -602,7 +622,7 @@ function App() {
     const completeLoading = () => {
       if (completed) return;
       completed = true;
-      releaseTimer = window.setTimeout(() => setShowLoader(false), Math.max(0, 650 - (performance.now() - startedAt)));
+      releaseTimer = window.setTimeout(() => setShowLoader(false), Math.max(0, 1100 - (performance.now() - startedAt)));
     };
 
     const fallbackTimer = window.setTimeout(completeLoading, 4000);
@@ -621,8 +641,17 @@ function App() {
 
 function SiteLoader() {
   return <div className="site-loading-screen" aria-label="加载中" role="status">
-    <div className="site-loader"><span><span /><span /><span /><span /></span><div className="site-loader-base"><span /><div className="site-loader-face" /></div></div>
-    <div className="site-longfazers" aria-hidden="true"><span /><span /><span /><span /></div>
+    <div className="site-cube-loader" aria-hidden="true">
+      <div className="box box0"><div /></div>
+      <div className="box box1"><div /></div>
+      <div className="box box2"><div /></div>
+      <div className="box box3"><div /></div>
+      <div className="box box4"><div /></div>
+      <div className="box box5"><div /></div>
+      <div className="box box6"><div /></div>
+      <div className="box box7"><div /></div>
+      <div className="ground"><div /></div>
+    </div>
   </div>;
 }
 
@@ -1811,6 +1840,7 @@ function SteamEntertainment({ overview, state, musicPreferences }: { overview: S
       </div>
     </> : <div className="steam-state"><p>{state === "loading" ? "正在同步 Steam 数据" : "Steam 数据暂不可用"}</p></div>}
     <MusicSection musicPreferences={musicPreferences} />
+    <TravelTraceMap />
   </section>;
 }
 

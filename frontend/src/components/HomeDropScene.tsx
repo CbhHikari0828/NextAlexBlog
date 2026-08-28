@@ -495,8 +495,8 @@ function FallingGlassModel() {
     profile: "glass",
     phase: 0.82,
     blobScale: [0.98, 0.9, 0.82],
-    cubeScale: [0.8, 0.76, 0.68],
-    cubeRoundness: 0.66,
+    cubeScale: [0.82, 0.8, 0.74],
+    cubeRoundness: 0.36,
     blobCubeInfluence: 0.26,
   }), []);
 
@@ -507,8 +507,8 @@ function FallingGlassModel() {
     profile: "core",
     phase: 2.14,
     blobScale: [1.03, 0.88, 0.8],
-    cubeScale: [0.74, 0.69, 0.63],
-    cubeRoundness: 0.78,
+    cubeScale: [0.76, 0.72, 0.66],
+    cubeRoundness: 0.44,
     blobCubeInfluence: 0.22,
   }), []);
 
@@ -516,9 +516,9 @@ function FallingGlassModel() {
     const dropStyle = typeof document === "undefined"
       ? undefined
       : getComputedStyle(document.querySelector<HTMLElement>(".home-drop-visual") ?? document.documentElement);
-    // The visual reference keeps the object as one organic glass form;
-    // scroll still drives travel/scale, but no longer morphs it into a cube.
-    const rawMorphProgress = 0;
+    // Keep the reference-inspired liquid glass object, but restore the
+    // scroll-driven whole-object morph into a rounded cube. No split pieces.
+    const rawMorphProgress = Number.parseFloat(dropStyle?.getPropertyValue("--drop-cube-progress") ?? "0");
     const rawVisualScale = Number.parseFloat(dropStyle?.getPropertyValue("--drop-visual-scale") ?? "1");
     const rawTravelProgress = Number.parseFloat(dropStyle?.getPropertyValue("--drop-travel-progress") ?? "0");
     const targetMorphProgress = THREE.MathUtils.clamp(Number.isFinite(rawMorphProgress) ? rawMorphProgress : 0, 0, 1);
@@ -533,15 +533,15 @@ function FallingGlassModel() {
     const morph = smoothstep(morphProgressRef.current);
     const travel = travelProgressRef.current;
     const spin = spinRef.current;
-    const autoSpin = spin * (0.9 - morph * 0.14);
+    const autoSpin = spin * (0.9 - morph * 0.42);
     const breath = Math.sin(state.clock.elapsedTime * 0.42) * 0.012;
 
     if (groupRef.current) {
       const scale = visualScaleRef.current * (1.08 - morph * 0.07 + breath);
       groupRef.current.scale.set(scale, scale, scale);
       groupRef.current.rotation.x = -0.28 + Math.sin(spin * 0.74) * 0.055 + morph * 0.1;
-      groupRef.current.rotation.y = 0.42 + autoSpin + travel * 0.18 + morph * 0.2;
-      groupRef.current.rotation.z = -0.1 + Math.sin(spin * 0.38) * 0.06 + travel * 0.12;
+      groupRef.current.rotation.y = 0.42 + autoSpin + travel * 0.12 + morph * 0.08;
+      groupRef.current.rotation.z = -0.1 + Math.sin(spin * 0.38) * 0.06 + travel * 0.08;
       groupRef.current.position.y = Math.sin(state.clock.elapsedTime * 0.32) * 0.035;
     }
 
