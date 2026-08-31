@@ -1,5 +1,5 @@
 import { FormEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { CSSProperties, PointerEvent as ReactPointerEvent, ReactNode } from "react";
+import type { PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import { useGSAP } from "@gsap/react";
 import { gsap } from "gsap";
 import { ScrollTrigger } from "gsap/ScrollTrigger";
@@ -9,8 +9,6 @@ import ReactMarkdown from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
 import AdminApp from "./AdminApp";
-import HomeDropScene from "./components/HomeDropScene";
-import HomeTechLandmarkScene from "./components/HomeTechLandmarkScene";
 import TravelTraceMap from "./components/TravelTraceMap";
 
 gsap.registerPlugin(useGSAP, ScrollTrigger);
@@ -167,15 +165,6 @@ const noteColors = ["ice", "mint", "lavender", "rose"] as const;
 const steamGameColors = ["#e11d48", "#f472b6", "#fb923c", "#facc15", "#84cc16", "#10b981", "#0ea5e9", "#3b82f6", "#8b5cf6", "#a78bfa"] as const;
 type NoteColor = typeof noteColors[number];
 const articlesPerPage = 5;
-
-type HomeTechLandmarkKind = "java" | "go" | "rust" | "postgresql";
-
-const homeTechLandmarks: { kind: HomeTechLandmarkKind; color: string; top: string }[] = [
-  { kind: "java", color: "#db4437", top: "112vh" },
-  { kind: "go", color: "#00add8", top: "158vh" },
-  { kind: "rust", color: "#e87934", top: "204vh" },
-  { kind: "postgresql", color: "#336791", top: "250vh" },
-];
 
 const homeStoryCards: { view: Exclude<View, "home">; step: string; label: string; title: string; body: string }[] = [
   { view: "articles", step: "01", label: "/articles", title: "技术文章", body: "沉淀 Java 并发、后端工程和项目复盘。" },
@@ -1114,41 +1103,6 @@ function Home({ navigate, setSelectedArticle, repositories, repositoryState }: {
   const homeRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    const root = homeRef.current;
-    if (!root) return;
-
-    const compactQuery = window.matchMedia("(max-width: 800px)");
-    let isCompact = compactQuery.matches;
-    const getTrackHeight = () => Math.round(Math.max(isCompact ? 2200 : 3000, window.innerHeight * (isCompact ? 3.2 : 3.8)));
-    let trackHeight = getTrackHeight();
-    let frame = 0;
-
-    root.style.setProperty("--home-drop-track-height", `${trackHeight}px`);
-
-    const syncTrackHeight = () => {
-      window.cancelAnimationFrame(frame);
-      frame = window.requestAnimationFrame(() => {
-        const nextIsCompact = compactQuery.matches;
-        if (nextIsCompact !== isCompact) {
-          isCompact = nextIsCompact;
-          trackHeight = getTrackHeight();
-        } else {
-          trackHeight = Math.max(trackHeight, getTrackHeight());
-        }
-        root.style.setProperty("--home-drop-track-height", `${trackHeight}px`);
-        ScrollTrigger.refresh();
-      });
-    };
-
-    window.addEventListener("resize", syncTrackHeight);
-    return () => {
-      window.cancelAnimationFrame(frame);
-      window.removeEventListener("resize", syncTrackHeight);
-      root.style.removeProperty("--home-drop-track-height");
-    };
-  }, []);
-
-  useEffect(() => {
     let nextCharacter = 0;
     const timer = window.setInterval(() => {
       nextCharacter += 1;
@@ -1172,10 +1126,6 @@ function Home({ navigate, setSelectedArticle, repositories, repositoryState }: {
     const articleHoverBg = root.querySelector<HTMLElement>(".home-article-hover-bg");
     const articleCursor = root.querySelector<HTMLElement>(".home-article-cursor");
     const articleRows = Array.from(root.querySelectorAll<HTMLElement>(".home-article-system-row"));
-    const dropScene = hero;
-    const dropObject = root.querySelector<HTMLElement>(".home-drop-object");
-    const dropVisual = root.querySelector<HTMLElement>(".home-drop-visual") ?? dropObject;
-    const articleSystems = root.querySelector<HTMLElement>(".home-article-systems");
     const storySection = root.querySelector<HTMLElement>(".home-horizontal-story");
     const storyViewport = root.querySelector<HTMLElement>(".home-horizontal-story-viewport");
     const storyTrack = root.querySelector<HTMLElement>(".home-horizontal-story-track");
@@ -1254,65 +1204,6 @@ function Home({ navigate, setSelectedArticle, repositories, repositoryState }: {
         cleanup.push(() => articleSystemInner.removeEventListener("pointerenter", showCursor));
         cleanup.push(() => articleSystemInner.removeEventListener("pointermove", moveCursor));
         cleanup.push(() => articleSystemInner.removeEventListener("pointerleave", clearActiveRow));
-      }
-
-      if (dropScene && dropObject && dropVisual && articleSystems) {
-        const dropStartScale = 1;
-        const dropMinScale = 0.5;
-        const dropMorphStart = 0.32;
-        const dropMorphEnd = 0.72;
-        let dropArticleStartTop = 1;
-        let dropArticleEntryTop = 1;
-        let dropTravelDistance = 1;
-        let dropBaseHeight = 1;
-        let dropHiddenByArticle = false;
-        gsap.set(dropVisual, { xPercent: -50, yPercent: -50, transformOrigin: "50% 50%", autoAlpha: 1, y: 0, scale: 1, rotation: -6 });
-        dropVisual.style.setProperty("--drop-visual-scale", String(dropStartScale));
-        dropVisual.style.setProperty("--drop-cube-progress", "0");
-        dropVisual.style.setProperty("--drop-travel-progress", "0");
-
-        const measureDropTravel = () => {
-          const ballRect = dropVisual.getBoundingClientRect();
-          const articleRect = articleSystems.getBoundingClientRect();
-          dropBaseHeight = Math.max(1, ballRect.height);
-          dropArticleStartTop = articleRect.top + window.scrollY;
-          dropArticleEntryTop = ballRect.top + ballRect.height / 2 + (dropBaseHeight * dropMinScale) / 2;
-          dropTravelDistance = Math.max(1, dropArticleStartTop - dropArticleEntryTop);
-        };
-
-        const syncDropScale = () => {
-          const articleRect = articleSystems.getBoundingClientRect();
-          const travelProgress = gsap.utils.clamp(0, 1, (dropArticleStartTop - articleRect.top) / dropTravelDistance);
-          const nextScale = gsap.utils.interpolate(dropStartScale, dropMinScale, travelProgress);
-          const morphProgress = gsap.utils.clamp(0, 1, (travelProgress - dropMorphStart) / (dropMorphEnd - dropMorphStart));
-
-          dropVisual.style.setProperty("--drop-visual-scale", String(nextScale));
-          dropVisual.style.setProperty("--drop-cube-progress", String(morphProgress));
-          dropVisual.style.setProperty("--drop-travel-progress", String(travelProgress));
-          return { articleRect, travelProgress };
-        };
-
-        measureDropTravel();
-        const dropScrollTrigger = ScrollTrigger.create({
-          trigger: dropScene,
-          start: "top top",
-          end: "bottom top",
-          onRefresh: measureDropTravel,
-          onUpdate: () => {
-            const { articleRect } = syncDropScale();
-            const articleTop = articleRect.top;
-            if (articleTop <= 0 && !dropHiddenByArticle) {
-              dropHiddenByArticle = true;
-              gsap.to(dropVisual, { autoAlpha: 0, duration: 0.16, ease: "power2.out", overwrite: "auto" });
-            } else if (articleTop > 0 && dropHiddenByArticle) {
-              dropHiddenByArticle = false;
-              gsap.to(dropVisual, { autoAlpha: 1, duration: 0.16, ease: "power2.out", overwrite: "auto" });
-            }
-          },
-        });
-
-        cleanup.push(() => dropScrollTrigger.kill());
-        cleanup.push(() => gsap.killTweensOf(dropVisual));
       }
 
       return () => cleanup.forEach((release) => release());
@@ -1405,14 +1296,6 @@ function Home({ navigate, setSelectedArticle, repositories, repositoryState }: {
               </div>
             </div>
           </div>
-          <div className="home-drop-landmarks" aria-hidden="true">
-            {homeTechLandmarks.map((landmark, index) => <div className={`home-drop-landmark home-drop-landmark-${index % 2 === 0 ? "left" : "right"}`} key={landmark.kind} style={{ "--landmark-top": landmark.top } as CSSProperties}>
-              <div className="home-drop-landmark-bubble">
-                <HomeTechLandmarkScene kind={landmark.kind} color={landmark.color} />
-              </div>
-            </div>)}
-          </div>
-          <div className="home-drop-object" aria-hidden="true"><div className="home-drop-visual"><HomeDropScene /></div></div>
         </div>
       </section>
       <section className="recent-section home-article-systems" aria-label="首页文章展示">
