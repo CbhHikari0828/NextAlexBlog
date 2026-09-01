@@ -9,6 +9,7 @@ import ReactMarkdown from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
 import AdminApp from "./AdminApp";
+import HomeLittlePlanetScene from "./components/HomeLittlePlanetScene";
 import TravelTraceMap from "./components/TravelTraceMap";
 
 gsap.registerPlugin(useGSAP, ScrollTrigger);
@@ -1295,6 +1296,9 @@ function Home({ navigate, setSelectedArticle, repositories, repositoryState }: {
                 <div className="profile-links"><button onClick={() => navigate("articles")}>技术文章</button><i /><button onClick={() => navigate("gallery")}>创作图库</button><i /><button onClick={() => navigate("studio")}>创作中心</button></div>
               </div>
             </div>
+          </div>
+          <div className="home-little-planet" aria-label="可旋转的小星球模型">
+            <HomeLittlePlanetScene />
           </div>
         </div>
       </section>
