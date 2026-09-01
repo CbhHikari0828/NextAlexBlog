@@ -29,5 +29,39 @@
 </head>
   <body>
     <div id="app"></div>
+    <script>
+      (() => {
+        const readyType = "home-little-planet-ready";
+        const notifyParent = () => {
+          requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+              window.parent?.postMessage({ type: readyType }, window.location.origin);
+            });
+          });
+        };
+
+        const waitForCanvas = () => {
+          if (document.querySelector("canvas")) {
+            notifyParent();
+            return;
+          }
+
+          const observer = new MutationObserver(() => {
+            if (!document.querySelector("canvas")) return;
+            observer.disconnect();
+            notifyParent();
+          });
+
+          observer.observe(document.documentElement, { childList: true, subtree: true });
+          window.setTimeout(() => {
+            observer.disconnect();
+            notifyParent();
+          }, 7000);
+        };
+
+        if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", waitForCanvas, { once: true });
+        else waitForCanvas();
+      })();
+    </script>
   </body>
 </html>

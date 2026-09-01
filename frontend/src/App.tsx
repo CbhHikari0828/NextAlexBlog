@@ -581,6 +581,7 @@ const notes: Note[] = [
 ];
 
 const categories = ["全部文章", "Java 并发编程", "JUC 基础", "异步工具箱", "后端实践", "系统设计"];
+const littlePlanetReadyEventName = "home-little-planet-ready";
 
 function App() {
   const [showLoader, setShowLoader] = useState(true);
@@ -608,19 +609,46 @@ function App() {
     const startedAt = performance.now();
     let completed = false;
     let releaseTimer: number | undefined;
+    const needsLittlePlanet = !window.location.pathname.startsWith("/admin");
+    let pageReady = document.readyState === "complete";
+    let littlePlanetReady = !needsLittlePlanet;
 
     const completeLoading = () => {
-      if (completed) return;
+      if (completed || !pageReady || !littlePlanetReady) return;
       completed = true;
       releaseTimer = window.setTimeout(() => setShowLoader(false), Math.max(0, 1100 - (performance.now() - startedAt)));
     };
 
-    const fallbackTimer = window.setTimeout(completeLoading, 4000);
-    if (document.readyState === "complete") completeLoading();
-    else window.addEventListener("load", completeLoading, { once: true });
+    const markPageReady = () => {
+      pageReady = true;
+      completeLoading();
+    };
+
+    const markLittlePlanetReady = () => {
+      littlePlanetReady = true;
+      completeLoading();
+    };
+
+    const handleLittlePlanetMessage = (event: MessageEvent) => {
+      if (event.origin !== window.location.origin || event.data?.type !== littlePlanetReadyEventName) return;
+      markLittlePlanetReady();
+    };
+
+    const fallbackTimer = window.setTimeout(() => {
+      pageReady = true;
+      littlePlanetReady = true;
+      completeLoading();
+    }, 9000);
+
+    if (pageReady) completeLoading();
+    else window.addEventListener("load", markPageReady, { once: true });
+    window.addEventListener(littlePlanetReadyEventName, markLittlePlanetReady, { once: true });
+    window.addEventListener("message", handleLittlePlanetMessage);
 
     return () => {
-      window.removeEventListener("load", completeLoading);
+      window.removeEventListener("load", markPageReady);
+      window.removeEventListener(littlePlanetReadyEventName, markLittlePlanetReady);
+      window.removeEventListener("message", handleLittlePlanetMessage);
       window.clearTimeout(fallbackTimer);
       window.clearTimeout(releaseTimer);
     };
