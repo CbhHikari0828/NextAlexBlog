@@ -176,6 +176,15 @@ const homeStoryCards: { view: Exclude<View, "home">; step: string; label: string
   { view: "guestbook", step: "06", label: "/guestbook", title: "留言板", body: "给访客留下简短反馈和交流入口。" },
 ];
 
+const homeStoryLogoLabels: Record<Exclude<View, "home">, string> = {
+  articles: "Tech",
+  notes: "Note",
+  gallery: "Art",
+  studio: "Lab",
+  entertainment: "Play",
+  guestbook: "Msg",
+};
+
 function noteRecordToNote(record: NoteRecord): Note | null {
   const title = record.title.trim();
   const markdown = record.content.trim();
@@ -1335,10 +1344,28 @@ function Home({ navigate, setSelectedArticle, repositories, repositoryState }: {
       </section>
       <section className="home-horizontal-story" aria-label="首页栏目导览">
         <div className="home-horizontal-story-inner home-content">
-          <div className="home-horizontal-story-head"><span>[ 栏目导览 ]</span><p>沿着主导航继续浏览</p></div>
+          <div className="home-horizontal-story-head"><span>[ 栏目导览 ]</span></div>
           <div className="home-horizontal-story-viewport">
             <div className="home-horizontal-story-track">
-              {homeStoryCards.map((item) => <button className="home-horizontal-story-panel" key={item.view} onClick={() => navigate(item.view)} type="button"><span>{item.step}</span><small>{item.label}</small><h2>{item.title}</h2><p>{item.body}</p></button>)}
+              {homeStoryCards.map((item) => (
+                <button className="home-horizontal-story-panel" key={item.view} onClick={() => navigate(item.view)} type="button" aria-label={`进入${item.title}`}>
+                  <span className="home-story-card-border" aria-hidden="true" />
+                  <span className="home-story-card-content">
+                    <span className="home-story-card-logo" aria-hidden="true">
+                      <span className="home-story-card-logo-mark">
+                        <span className="home-story-card-logo-initial">{homeStoryLogoLabels[item.view]}</span>
+                      </span>
+                      <span className="home-story-card-logo-word">
+                        <strong>{item.title}</strong>
+                        <em>{item.label}</em>
+                      </span>
+                      <span className="home-story-card-trail" />
+                    </span>
+                    <span className="home-story-card-logo-bottom">NextAlex</span>
+                  </span>
+                  <span className="home-story-card-bottom-text">{item.body}</span>
+                </button>
+              ))}
             </div>
           </div>
         </div>
@@ -1377,9 +1404,9 @@ function HomeQuickFolder({ navigate }: { navigate: (view: View) => void }) {
 
   return (
     <aside className="home-folder-widget">
-      <div className="folder-card">
-        <input checked={open} className="folder-toggle" id="home-quick-folder" onChange={(event) => setOpen(event.target.checked)} type="checkbox" />
-        <label className="folder-trigger" htmlFor="home-quick-folder" aria-label={open ? "收起快捷入口" : "展开快捷入口"} />
+      <div className={`folder-card${open ? " is-open" : ""}`}>
+        <input checked={open} className="folder-toggle" id="home-quick-folder" readOnly type="checkbox" />
+        <button className="folder-trigger" onClick={() => setOpen(true)} type="button" aria-label={open ? "收起快捷入口" : "展开快捷入口"} />
         <div className="hint-wrapper" aria-hidden="true"><span className="hint-text">点击展开</span><svg className="hint-arrow" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M 35 5 C 35 5, 15 5, 10 25 M 10 25 L 3 18 M 10 25 L 18 22" stroke="#60a5fa" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg></div>
         <div className="folder-container">
           <svg className="folder-back" viewBox="0 0 50 40" fill="none" aria-hidden="true"><path d="M0 4C0 1.79086 1.79086 0 4 0H16.524C17.721 0 18.8415 0.54051 19.574 1.4673L22.426 5.0654C23.1585 5.99219 24.279 6.5327 25.476 6.5327H46C48.2091 6.5327 50 8.32356 50 10.5327V36C50 38.2091 48.2091 40 46 40H4C1.79086 40 0 38.2091 0 36V4Z" fill="#0056b3" /></svg>
@@ -1388,8 +1415,8 @@ function HomeQuickFolder({ navigate }: { navigate: (view: View) => void }) {
           <button className={`file file-3${matchesSearch("创作中心") ? "" : " is-filtered-out"}`} onClick={() => openView("studio")} type="button"><div className="shine" /><svg className="file-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><polyline points="16 18 22 12 16 6" /><polyline points="8 6 2 12 8 18" /></svg><div className="file-text">创作中心.code</div><div className="file-tag">WORKS · LINK</div></button>
           <button className={`file file-2${matchesSearch("文章") ? "" : " is-filtered-out"}`} onClick={() => openView("articles")} type="button"><div className="shine" /><svg className="file-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14 2 14 8 20 8" /><line x1="16" y1="13" x2="8" y2="13" /><line x1="16" y1="17" x2="8" y2="17" /><polyline points="10 9 9 9 8 9" /></svg><div className="file-text">技术文章.md</div><div className="file-tag">ARTICLES · LINK</div></button>
           <button className={`file file-1${matchesSearch("笔记") ? "" : " is-filtered-out"}`} onClick={() => openView("notes")} type="button"><div className="shine" /><svg className="file-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><rect x="2" y="3" width="20" height="14" rx="2" ry="2" /><line x1="8" y1="21" x2="16" y2="21" /><line x1="12" y1="17" x2="12" y2="21" /></svg><div className="file-text">日常笔记.md</div><div className="file-tag">NOTES · LINK</div></button>
-          <label className="folder-front-wrapper" htmlFor="home-quick-folder" aria-label="切换快捷入口"><svg className="folder-front" viewBox="0 0 50 34" fill="none" aria-hidden="true"><path d="M0 4C0 1.79086 1.79086 0 4 0H46C48.2091 0 50 1.79086 50 4V30C50 32.2091 48.2091 34 46 34H4C1.79086 34 0 32.2091 0 30V4Z" fill="rgba(0, 123, 255, 0.65)" /></svg><div className="folder-label" /></label>
-          <button className="folder-collapse-button" onClick={() => setOpen(false)} type="button">收起文件</button>
+          <div className="folder-front-wrapper" aria-hidden="true"><svg className="folder-front" viewBox="0 0 50 34" fill="none" aria-hidden="true"><path d="M0 4C0 1.79086 1.79086 0 4 0H46C48.2091 0 50 1.79086 50 4V30C50 32.2091 48.2091 34 46 34H4C1.79086 34 0 32.2091 0 30V4Z" fill="rgba(0, 123, 255, 0.65)" /></svg><div className="folder-label" /></div>
+          <button className="folder-collapse-button" onClick={(event) => { event.stopPropagation(); setOpen(false); }} type="button">收起文件</button>
         </div>
       </div>
     </aside>
