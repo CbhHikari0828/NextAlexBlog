@@ -1167,6 +1167,7 @@ function Home({ navigate, setSelectedArticle, repositories, repositoryState }: {
     const storySection = root.querySelector<HTMLElement>(".home-horizontal-story");
     const storyViewport = root.querySelector<HTMLElement>(".home-horizontal-story-viewport");
     const storyTrack = root.querySelector<HTMLElement>(".home-horizontal-story-track");
+    const storyProgress = root.querySelector<HTMLElement>(".home-horizontal-story-progress-fill");
     const media = gsap.matchMedia();
 
     media.add("(prefers-reduced-motion: no-preference)", () => {
@@ -1264,13 +1265,27 @@ function Home({ navigate, setSelectedArticle, repositories, repositoryState }: {
     media.add("(min-width: 981px) and (prefers-reduced-motion: no-preference)", () => {
       if (!storySection || !storyViewport || !storyTrack) return;
 
+      const storyPanels = Array.from(storyTrack.querySelectorAll<HTMLElement>(".home-horizontal-story-panel"));
       const getDistance = () => Math.max(0, storyTrack.scrollWidth - storyViewport.clientWidth);
-      const storyRevealTween = gsap.fromTo(storyTrack, {
-        autoAlpha: 0.9,
-        y: 14,
+      let activeStoryIndex = -1;
+      const setActiveStory = (progress: number) => {
+        if (storyProgress) storyProgress.style.transform = `scaleX(${progress.toFixed(4)})`;
+        if (storyPanels.length === 0) return;
+
+        const nextIndex = Math.min(storyPanels.length - 1, Math.max(0, Math.round(progress * (storyPanels.length - 1))));
+        if (nextIndex === activeStoryIndex) return;
+        activeStoryIndex = nextIndex;
+        storyPanels.forEach((panel, index) => panel.classList.toggle("is-story-active", index === activeStoryIndex));
+      };
+
+      setActiveStory(0);
+      const storyRevealTween = gsap.fromTo([storySection.querySelector(".home-horizontal-story-copy"), ...storyPanels].filter(Boolean), {
+        autoAlpha: 0,
+        y: 28,
       }, {
         autoAlpha: 1,
         y: 0,
+        stagger: 0.07,
         ease: "none",
         scrollTrigger: {
           trigger: storySection,
@@ -1286,15 +1301,17 @@ function Home({ navigate, setSelectedArticle, repositories, repositoryState }: {
         ease: "none",
         scrollTrigger: {
           trigger: storySection,
-          start: "top 12%",
-          end: () => `+=${Math.max(getDistance(), window.innerHeight * 0.85)}`,
-          scrub: 0.8,
+          start: "top top",
+          end: () => `+=${Math.max(getDistance() + window.innerHeight * 0.55, window.innerHeight * 1.35)}`,
+          scrub: 0.95,
           pin: true,
           anticipatePin: 1,
           invalidateOnRefresh: true,
           refreshPriority: 8,
-          onRefresh: () => {
+          onUpdate: (self) => setActiveStory(self.progress),
+          onRefresh: (self) => {
             if (getDistance() <= 1) gsap.set(storyTrack, { x: 0 });
+            setActiveStory(self.progress);
           },
         },
       });
@@ -1304,6 +1321,8 @@ function Home({ navigate, setSelectedArticle, repositories, repositoryState }: {
         storyRevealTween.kill();
         storyTween.scrollTrigger?.kill();
         storyTween.kill();
+        storyPanels.forEach((panel) => panel.classList.remove("is-story-active"));
+        if (storyProgress) storyProgress.style.transform = "";
         gsap.set(storyTrack, { clearProps: "transform,opacity,visibility" });
       };
     });
@@ -1344,26 +1363,19 @@ function Home({ navigate, setSelectedArticle, repositories, repositoryState }: {
       </section>
       <section className="home-horizontal-story" aria-label="首页栏目导览">
         <div className="home-horizontal-story-inner home-content">
-          <div className="home-horizontal-story-head"><span>[ 栏目导览 ]</span></div>
+          <div className="home-horizontal-story-copy">
+            <div className="home-horizontal-story-progress" aria-hidden="true"><span className="home-horizontal-story-progress-fill" /></div>
+          </div>
           <div className="home-horizontal-story-viewport">
             <div className="home-horizontal-story-track">
               {homeStoryCards.map((item) => (
                 <button className="home-horizontal-story-panel" key={item.view} onClick={() => navigate(item.view)} type="button" aria-label={`进入${item.title}`}>
-                  <span className="home-story-card-border" aria-hidden="true" />
-                  <span className="home-story-card-content">
-                    <span className="home-story-card-logo" aria-hidden="true">
-                      <span className="home-story-card-logo-mark">
-                        <span className="home-story-card-logo-initial">{homeStoryLogoLabels[item.view]}</span>
-                      </span>
-                      <span className="home-story-card-logo-word">
-                        <strong>{item.title}</strong>
-                        <em>{item.label}</em>
-                      </span>
-                      <span className="home-story-card-trail" />
-                    </span>
-                    <span className="home-story-card-logo-bottom">NextAlex</span>
-                  </span>
-                  <span className="home-story-card-bottom-text">{item.body}</span>
+                  <span className="home-story-panel-ambient" aria-hidden="true" />
+                  <span className="home-story-panel-code" aria-hidden="true">{homeStoryLogoLabels[item.view]}</span>
+                  <span className="home-story-panel-route">{item.label}</span>
+                  <strong>{item.title}</strong>
+                  <span className="home-story-panel-copy">{item.body}</span>
+                  <span className="home-story-panel-action">进入栏目 <ArrowUpRight size={16} /></span>
                 </button>
               ))}
             </div>
@@ -1754,11 +1766,14 @@ function Studio({ contributions, contributionState, repositories, repositoryStat
       </div>
       <section className="contribution-panel" aria-label="项目贡献记录">
         <header><strong>{contributionSummary}</strong><a href="https://github.com/CbhHikari0828" target="_blank" rel="noreferrer">{contributionYear} <ChevronDown size={16} /></a></header>
-        <div className="contribution-calendar" style={{ "--contribution-week-count": contributionWeeks.length } as React.CSSProperties}>
-          <div className="contribution-months">{contributionMonths.map((month) => <span key={`${month.name}-${month.weekIndex}`} style={{ gridColumnStart: month.weekIndex + 1 }}>{month.name}</span>)}</div>
-          <div className="contribution-grid">{contributionWeeks.map((week, weekIndex) => <div className="contribution-week" key={weekIndex}>{week.map((cell, dayIndex) => <i className={`contribution-cell contribution-level-${cell.level}${cell.date ? "" : " contribution-cell-outside"}`} key={dayIndex} title={cell.date ? `${cell.date}: ${cell.count} 次贡献` : undefined} />)}</div>)}</div>
-        </div>
-        <footer><span>少</span><i className="contribution-cell contribution-level-0" /><i className="contribution-cell contribution-level-1" /><i className="contribution-cell contribution-level-2" /><i className="contribution-cell contribution-level-3" /><i className="contribution-cell contribution-level-4" /><span>多</span></footer>
+        {contributionState === "ready" ? <div className="contribution-calendar-shell">
+          <div className="contribution-calendar" style={{ "--contribution-week-count": contributionWeeks.length } as React.CSSProperties}>
+            <div className="contribution-months">{contributionMonths.map((month) => <span key={`${month.name}-${month.weekIndex}`} style={{ gridColumnStart: month.weekIndex + 1 }}>{month.name}</span>)}</div>
+            <div className="contribution-grid">{contributionWeeks.map((week, weekIndex) => <div className="contribution-week" key={weekIndex}>{week.map((cell, dayIndex) => <i className={`contribution-cell contribution-level-${cell.level}${cell.date ? "" : " contribution-cell-outside"}`} key={dayIndex} title={cell.date ? `${cell.date}: ${cell.count} 次贡献` : undefined} />)}</div>)}</div>
+          </div>
+          <span className="contribution-snake-buddy" aria-hidden="true"><i /><i /><i /><i /><b /></span>
+        </div> : <div className="contribution-snake-placeholder">{contributionState === "loading" ? "正在同步贡献记录" : "刷新 GitHub 后显示贡献墙"}</div>}
+        <footer className="contribution-legend"><span>少</span><i className="contribution-cell contribution-level-0" /><i className="contribution-cell contribution-level-1" /><i className="contribution-cell contribution-level-2" /><i className="contribution-cell contribution-level-3" /><i className="contribution-cell contribution-level-4" /><span>多</span><span className="contribution-snapshot-note">Snapshot</span></footer>
       </section>
     </div>
     <section className="studio-projects"><header><h2>PROJECTS</h2><span /><a href="https://github.com/CbhHikari0828?tab=repositories" target="_blank" rel="noreferrer">VIEW ALL <ArrowUpRight size={17} /></a></header><div className="studio-project-grid">{repositoryState === "ready" && projects.length > 0 ? projects.map((project) => <RepositoryProjectCard key={project.htmlUrl} project={project} username={repositories?.username || "GitHub"} />) : <p className="studio-project-empty">{repositoryState === "loading" ? "正在同步 GitHub 项目" : "GitHub 项目暂不可用"}</p>}</div></section>
