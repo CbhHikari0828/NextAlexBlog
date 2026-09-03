@@ -10,6 +10,7 @@ import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
 import AdminApp from "./AdminApp";
 import HomeLittlePlanetScene from "./components/HomeLittlePlanetScene";
+import HomeXylophoneBackdrop from "./components/HomeXylophoneScene";
 import TravelTraceMap from "./components/TravelTraceMap";
 
 gsap.registerPlugin(useGSAP, ScrollTrigger);
@@ -1266,7 +1267,29 @@ function Home({ navigate, setSelectedArticle, repositories, repositoryState }: {
       if (!storySection || !storyViewport || !storyTrack) return;
 
       const storyPanels = Array.from(storyTrack.querySelectorAll<HTMLElement>(".home-horizontal-story-panel"));
-      const getDistance = () => Math.max(0, storyTrack.scrollWidth - storyViewport.clientWidth);
+      const getPanelCenteredX = (panel?: HTMLElement) => {
+        if (!panel) return 0;
+        const panelCenter = panel.offsetLeft + panel.offsetWidth / 2;
+        const viewportCenter = storyViewport.clientWidth / 2;
+        return viewportCenter - panelCenter;
+      };
+      const getStartX = () => getPanelCenteredX(storyPanels[0]);
+      const getEndX = () => getPanelCenteredX(storyPanels[storyPanels.length - 1]);
+      const getDistance = () => {
+        return Math.max(0, getStartX() - getEndX());
+      };
+      const getStoryScrollLength = () => {
+        const distance = getDistance();
+        const viewportHeight = window.innerHeight;
+        const panelCount = Math.max(storyPanels.length, 1);
+        return Math.max(distance * 1.55 + viewportHeight * 1.15, viewportHeight * Math.max(2.25, panelCount * 0.85));
+      };
+      const getTrackProgress = () => {
+        const distance = getDistance();
+        if (distance <= 1) return 0;
+        const currentX = Number(gsap.getProperty(storyTrack, "x")) || 0;
+        return Math.min(1, Math.max(0, (getStartX() - currentX) / distance));
+      };
       let activeStoryIndex = -1;
       const setActiveStory = (progress: number) => {
         if (storyProgress) storyProgress.style.transform = `scaleX(${progress.toFixed(4)})`;
@@ -1289,32 +1312,35 @@ function Home({ navigate, setSelectedArticle, repositories, repositoryState }: {
         ease: "none",
         scrollTrigger: {
           trigger: storySection,
-          start: "top 78%",
-          end: "top 30%",
-          scrub: 0.7,
+          start: "top 88%",
+          end: "top 14%",
+          scrub: 1.15,
           invalidateOnRefresh: true,
           refreshPriority: 7,
         },
       });
-      const storyTween = gsap.to(storyTrack, {
-        x: () => -getDistance(),
-        ease: "none",
+      const storyTween = gsap.timeline({
+        onUpdate: () => setActiveStory(getTrackProgress()),
         scrollTrigger: {
           trigger: storySection,
           start: "top top",
-          end: () => `+=${Math.max(getDistance() + window.innerHeight * 0.55, window.innerHeight * 1.35)}`,
-          scrub: 0.95,
+          end: () => `+=${getStoryScrollLength()}`,
+          scrub: 0.28,
           pin: true,
           anticipatePin: 1,
           invalidateOnRefresh: true,
           refreshPriority: 8,
-          onUpdate: (self) => setActiveStory(self.progress),
+          onUpdate: () => setActiveStory(getTrackProgress()),
           onRefresh: (self) => {
-            if (getDistance() <= 1) gsap.set(storyTrack, { x: 0 });
-            setActiveStory(self.progress);
+            if (getDistance() <= 1) gsap.set(storyTrack, { x: getStartX() });
+            setActiveStory(getTrackProgress() || self.progress);
           },
         },
       });
+      storyTween
+        .fromTo(storyTrack, { x: () => getStartX() }, { x: () => getStartX() - getDistance() * 0.08, duration: 0.16, ease: "power3.out" })
+        .to(storyTrack, { x: () => getStartX() - getDistance() * 0.92, duration: 0.68, ease: "none" })
+        .to(storyTrack, { x: () => getEndX(), duration: 0.16, ease: "power3.inOut" });
 
       return () => {
         storyRevealTween.scrollTrigger?.kill();
@@ -1339,6 +1365,7 @@ function Home({ navigate, setSelectedArticle, repositories, repositoryState }: {
   return (
     <div className="home-motion-root" ref={homeRef}>
       <div className="home-background" aria-hidden="true" />
+      <HomeXylophoneBackdrop />
       <div className="home-canvas">
       <section className="home-hero">
         <div className="home-hero-inner">
@@ -1369,13 +1396,22 @@ function Home({ navigate, setSelectedArticle, repositories, repositoryState }: {
           <div className="home-horizontal-story-viewport">
             <div className="home-horizontal-story-track">
               {homeStoryCards.map((item) => (
-                <button className="home-horizontal-story-panel" key={item.view} onClick={() => navigate(item.view)} type="button" aria-label={`进入${item.title}`}>
+                <button className={`home-horizontal-story-panel home-story-panel-${item.view}`} key={item.view} onClick={() => navigate(item.view)} type="button" aria-label={`进入${item.title}`}>
                   <span className="home-story-panel-ambient" aria-hidden="true" />
+                  <span className="home-story-panel-media" aria-hidden="true">
+                    <span className="home-story-panel-media-grid" />
+                    <span className="home-story-panel-orb" />
+                    <span className="home-story-panel-shape home-story-panel-shape-a" />
+                    <span className="home-story-panel-shape home-story-panel-shape-b" />
+                    <span className="home-story-panel-shape home-story-panel-shape-c" />
+                  </span>
                   <span className="home-story-panel-code" aria-hidden="true">{homeStoryLogoLabels[item.view]}</span>
-                  <span className="home-story-panel-route">{item.label}</span>
-                  <strong>{item.title}</strong>
-                  <span className="home-story-panel-copy">{item.body}</span>
-                  <span className="home-story-panel-action">进入栏目 <ArrowUpRight size={16} /></span>
+                  <span className="home-story-panel-content">
+                    <span className="home-story-panel-route">{item.label}</span>
+                    <strong>{item.title}</strong>
+                    <span className="home-story-panel-copy">{item.body}</span>
+                    <span className="home-story-panel-action">进入栏目 <ArrowUpRight size={16} /></span>
+                  </span>
                 </button>
               ))}
             </div>
