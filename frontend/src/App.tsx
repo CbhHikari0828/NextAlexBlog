@@ -1268,17 +1268,10 @@ function Home({ navigate, setSelectedArticle, repositories, repositoryState }: {
 
       const storyPanels = Array.from(storyTrack.querySelectorAll<HTMLElement>(".home-horizontal-story-panel"));
       const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
-      const smoothstep = (value: number) => {
-        const nextValue = clamp(value, 0, 1);
-        return nextValue * nextValue * (3 - 2 * nextValue);
-      };
       let storyLayout = {
-        panelCenters: [] as number[],
-        viewportCenter: 0,
         startX: 0,
         endX: 0,
         distance: 0,
-        falloff: 1,
       };
       const getPanelCenteredX = (panel?: HTMLElement) => {
         if (!panel) return 0;
@@ -1287,19 +1280,12 @@ function Home({ navigate, setSelectedArticle, repositories, repositoryState }: {
         return viewportCenter - panelCenter;
       };
       const refreshStoryLayout = () => {
-        const panelCenters = storyPanels.map((panel) => panel.offsetLeft + panel.offsetWidth / 2);
-        const viewportCenter = storyViewport.clientWidth / 2;
         const startX = getPanelCenteredX(storyPanels[0]);
         const endX = getPanelCenteredX(storyPanels[storyPanels.length - 1]);
-        const distance = Math.max(0, startX - endX);
-        const averageStep = storyPanels.length > 1 ? distance / (storyPanels.length - 1) : storyViewport.clientWidth;
         storyLayout = {
-          panelCenters,
-          viewportCenter,
           startX,
           endX,
-          distance,
-          falloff: Math.max(averageStep * 0.86, storyViewport.clientWidth * 0.32),
+          distance: Math.max(0, startX - endX),
         };
       };
       const getStartX = () => storyLayout.startX;
@@ -1309,49 +1295,19 @@ function Home({ navigate, setSelectedArticle, repositories, repositoryState }: {
         const distance = getDistance();
         const viewportHeight = window.innerHeight;
         const panelCount = Math.max(storyPanels.length, 1);
-        return Math.max(distance * 1.55 + viewportHeight * 1.15, viewportHeight * Math.max(2.25, panelCount * 0.85));
+        return Math.max(distance * 1.78 + viewportHeight * 1.2, viewportHeight * Math.max(2.55, panelCount * 0.92));
       };
       const progressScale = storyProgress ? gsap.quickSetter(storyProgress, "scaleX") : undefined;
-      const panelSetters = storyPanels.map((panel) => ({
-        y: gsap.quickSetter(panel, "y", "px"),
-        scale: gsap.quickSetter(panel, "scale"),
-        rotationX: gsap.quickSetter(panel, "rotationX", "deg"),
-        rotationY: gsap.quickSetter(panel, "rotationY", "deg"),
-      }));
       let activeStoryIndex = -1;
-      let lastRenderedX = Number.NaN;
       let lastProgress = -1;
-      const updateStoryState = () => {
-        const distance = getDistance();
-        const currentX = Number(gsap.getProperty(storyTrack, "x")) || getStartX();
-        const progress = distance <= 1 ? 0 : clamp((getStartX() - currentX) / distance, 0, 1);
+      const updateStoryState = (nextProgress = 0) => {
+        const progress = clamp(nextProgress, 0, 1);
         if (progressScale && Math.abs(progress - lastProgress) > 0.001) {
           progressScale(progress);
           lastProgress = progress;
         }
         if (storyPanels.length === 0) return;
-        if (Number.isFinite(lastRenderedX) && Math.abs(currentX - lastRenderedX) < 0.35) return;
-        lastRenderedX = currentX;
-
-        let nextIndex = 0;
-        let nearestDistance = Number.POSITIVE_INFINITY;
-        storyPanels.forEach((panel, index) => {
-          const center = (storyLayout.panelCenters[index] ?? 0) + currentX;
-          const signedDistance = center - storyLayout.viewportCenter;
-          const absDistance = Math.abs(signedDistance);
-          const closeness = smoothstep(1 - absDistance / storyLayout.falloff);
-          if (absDistance < nearestDistance) {
-            nearestDistance = absDistance;
-            nextIndex = index;
-          }
-
-          const sideRotation = clamp(-(signedDistance / Math.max(storyLayout.viewportCenter, 1)) * 6.5, -6.5, 6.5);
-          const setters = panelSetters[index];
-          setters.y(10 - closeness * 22);
-          setters.scale(0.9 + closeness * 0.1);
-          setters.rotationX(1.6 * (1 - closeness));
-          setters.rotationY(sideRotation * (1 - closeness * 0.45));
-        });
+        const nextIndex = clamp(Math.round(progress * (storyPanels.length - 1)), 0, storyPanels.length - 1);
 
         if (nextIndex !== activeStoryIndex) {
           activeStoryIndex = nextIndex;
@@ -1362,8 +1318,7 @@ function Home({ navigate, setSelectedArticle, repositories, repositoryState }: {
       storySection.classList.add("is-scroll-driven");
       refreshStoryLayout();
       gsap.set(storyTrack, { x: getStartX(), force3D: true });
-      gsap.set(storyPanels, { transformOrigin: "center center", transformPerspective: 1200, force3D: true });
-      updateStoryState();
+      updateStoryState(0);
       const storyRevealTween = gsap.fromTo([storySection.querySelector(".home-horizontal-story-copy"), storyViewport].filter(Boolean), {
         autoAlpha: 0,
         y: 24,
@@ -1381,30 +1336,27 @@ function Home({ navigate, setSelectedArticle, repositories, repositoryState }: {
           refreshPriority: 7,
         },
       });
-      const storyTween = gsap.timeline({
-        onUpdate: updateStoryState,
+      let storyTween: gsap.core.Timeline;
+      storyTween = gsap.timeline({
+        onUpdate: () => updateStoryState(storyTween.progress()),
         scrollTrigger: {
           trigger: storySection,
           start: "top top",
           end: () => `+=${getStoryScrollLength()}`,
-          scrub: true,
+          scrub: 0.62,
           pin: true,
           anticipatePin: 1,
           invalidateOnRefresh: true,
           refreshPriority: 8,
           onRefresh: () => {
             refreshStoryLayout();
-            lastRenderedX = Number.NaN;
             lastProgress = -1;
             if (getDistance() <= 1) gsap.set(storyTrack, { x: getStartX() });
-            updateStoryState();
+            updateStoryState(storyTween.progress());
           },
         },
       });
-      storyTween
-        .fromTo(storyTrack, { x: () => getStartX() }, { x: () => getStartX() - getDistance() * 0.08, duration: 0.16, ease: "power3.out" })
-        .to(storyTrack, { x: () => getStartX() - getDistance() * 0.92, duration: 0.68, ease: "none" })
-        .to(storyTrack, { x: () => getEndX(), duration: 0.16, ease: "power3.inOut" });
+      storyTween.fromTo(storyTrack, { x: () => getStartX() }, { x: () => getEndX(), duration: 1, ease: "none" });
 
       return () => {
         storyRevealTween.scrollTrigger?.kill();
@@ -1415,7 +1367,6 @@ function Home({ navigate, setSelectedArticle, repositories, repositoryState }: {
         storyPanels.forEach((panel) => panel.classList.remove("is-story-active"));
         if (storyProgress) storyProgress.style.transform = "";
         gsap.set(storyTrack, { clearProps: "transform,opacity,visibility" });
-        gsap.set(storyPanels, { clearProps: "transform,filter,transformOrigin" });
       };
     });
 
