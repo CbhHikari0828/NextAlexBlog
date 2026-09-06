@@ -3,7 +3,7 @@ import type { PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import { useGSAP } from "@gsap/react";
 import { gsap } from "gsap";
 import { ScrollTrigger } from "gsap/ScrollTrigger";
-import { ArrowUpRight, ChevronDown, ChevronLeft, ChevronRight, Code2, Eye, GitBranch, GitFork, Mail, Rss, Send, Star, Users } from "lucide-react";
+import { ArrowUpRight, ChevronDown, ChevronLeft, ChevronRight, Code2, Eye, GitBranch, GitFork, Mail, Rss, Send, Star, Users, X } from "lucide-react";
 import { motion, useMotionValue, useSpring, useTransform } from "motion/react";
 import ReactMarkdown from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
@@ -1606,42 +1606,109 @@ function Gallery({ creations, setSelectedCreation }: { creations: Creation[]; se
   const cards: LayoutGridCard[] = creations.map((creation, index) => ({
     id: index + 1,
     thumbnail: creation.image,
-    className: "gallery-card",
-    content: <GalleryLayoutContent creation={creation} setSelectedCreation={setSelectedCreation} />,
     label: creation.title,
+    content: <GalleryLayoutContent creation={creation} setSelectedCreation={setSelectedCreation} />,
   }));
 
-  return <section className="gallery-showcase"><div className="gallery-head"><p>展示 AI 生成图像、视觉研究和界面设计作品，按项目归档。</p><span>{String(creations.length).padStart(2, "0")} PROJECTS</span></div>{creations.length > 0 ? <LayoutGrid cards={cards} /> : <div className="gallery-empty">暂无作品</div>}</section>;
+  return <section className="gallery-showcase">
+    <header className="gallery-head">
+      <div className="gallery-heading">
+        <span className="gallery-kicker">VISUAL ARCHIVE</span>
+        <h1>创作图库</h1>
+        <p>展示 AI 生成图像、视觉研究和界面设计作品，按项目归档。</p>
+      </div>
+      <div className="gallery-count" aria-label={`共 ${creations.length} 件作品`}>
+        <strong>{String(creations.length).padStart(2, "0")}</strong>
+        <span>WORKS</span>
+      </div>
+    </header>
+    <div className="gallery-rule" aria-hidden="true"><i /></div>
+    {creations.length > 0 ? <LayoutGrid cards={cards} /> : <div className="gallery-empty">暂无作品</div>}
+  </section>;
 }
 
 type LayoutGridCard = {
   id: number;
-  content: ReactNode;
-  className: string;
   thumbnail: string;
   label: string;
+  content: ReactNode;
 };
+
+function getGalleryColumnCount() {
+  if (typeof window === "undefined") return 3;
+  if (window.matchMedia("(max-width: 520px)").matches) return 1;
+  if (window.matchMedia("(max-width: 1120px)").matches) return 2;
+  return 3;
+}
+
+function getGalleryPreviewSize(ratio: number | undefined, viewport: { width: number; height: number }) {
+  if (!ratio || !viewport.width || !viewport.height) return null;
+  const mobile = viewport.width <= 520;
+  const maxWidth = mobile ? Math.max(1, viewport.width - 24) : Math.min(viewport.width * .9, 1120);
+  const maxHeight = mobile ? Math.min(viewport.height * .74, 640) : Math.min(viewport.height * .82, 820);
+  const width = Math.min(maxWidth, maxHeight * ratio);
+  const height = width / ratio;
+  return { width: Math.round(width), height: Math.round(height) };
+}
 
 function LayoutGrid({ cards }: { cards: LayoutGridCard[] }) {
   const [selected, setSelected] = useState<LayoutGridCard | null>(null);
-  const [lastSelected, setLastSelected] = useState<LayoutGridCard | null>(null);
   const [imageRatios, setImageRatios] = useState<Record<number, number>>({});
-  const [gridMetrics, setGridMetrics] = useState({ width: 0, columns: 3 });
+  const [gridMetrics, setGridMetrics] = useState(() => ({ width: 0, columns: getGalleryColumnCount() }));
+  const [viewport, setViewport] = useState({ width: 0, height: 0 });
   const gridRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const updateViewport = () => setViewport({ width: window.innerWidth, height: window.innerHeight });
+    updateViewport();
+    window.addEventListener("resize", updateViewport, { passive: true });
+    return () => window.removeEventListener("resize", updateViewport);
+  }, []);
 
   useEffect(() => {
     const grid = gridRef.current;
     if (!grid) return;
     const updateMetrics = () => {
-      const style = window.getComputedStyle(grid);
-      const columns = style.gridTemplateColumns.split(" ").filter(Boolean).length || 1;
-      setGridMetrics({ width: grid.clientWidth, columns });
+      const columns = getGalleryColumnCount();
+      const width = grid.clientWidth;
+      setGridMetrics((current) => current.width === width && current.columns === columns ? current : { width, columns });
     };
     updateMetrics();
     const observer = new ResizeObserver(updateMetrics);
     observer.observe(grid);
-    return () => observer.disconnect();
+    window.addEventListener("resize", updateMetrics, { passive: true });
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", updateMetrics);
+    };
   }, []);
+
+  useEffect(() => {
+    if (!selected) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setSelected(null);
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [selected]);
+
+  const placements = useMemo(() => {
+    const columns = Math.max(1, gridMetrics.columns);
+    const columnWidth = gridMetrics.width > 0 ? gridMetrics.width / columns : 0;
+    const columnBottoms = Array.from({ length: columns }, () => 0);
+
+    return cards.map((card) => {
+      const ratio = imageRatios[card.id];
+      const imageHeight = ratio && columnWidth > 0 ? columnWidth / ratio : 240;
+      const rowSpan = Math.max(1, Math.ceil(imageHeight));
+      const column = columnBottoms.indexOf(Math.min(...columnBottoms));
+      const rowStart = columnBottoms[column] + 1;
+      columnBottoms[column] = rowStart + rowSpan - 1;
+      return { imageHeight, rowSpan, column, rowStart };
+    });
+  }, [cards, gridMetrics, imageRatios]);
+
+  const selectedPreviewSize = getGalleryPreviewSize(selected ? imageRatios[selected.id] : undefined, viewport);
 
   useGSAP(() => {
     const grid = gridRef.current;
@@ -1669,12 +1736,14 @@ function LayoutGrid({ cards }: { cards: LayoutGridCard[] }) {
   }, { scope: gridRef, dependencies: [cards.length], revertOnUpdate: true });
 
   function handleClick(card: LayoutGridCard) {
-    setLastSelected(selected);
+    if (selected?.id === card.id) {
+      handleOutsideClick();
+      return;
+    }
     setSelected(card);
   }
 
   function handleOutsideClick() {
-    setLastSelected(selected);
     setSelected(null);
   }
 
@@ -1686,24 +1755,24 @@ function LayoutGrid({ cards }: { cards: LayoutGridCard[] }) {
   }
 
   return <div className="layout-grid gallery-grid" ref={gridRef}>
-    {cards.map((card) => {
-      const ratio = imageRatios[card.id];
-      const columnWidth = gridMetrics.width / gridMetrics.columns;
-      const imageHeight = ratio && columnWidth > 0 ? columnWidth / ratio : 240;
-      const rowSpan = Math.max(1, Math.ceil(imageHeight));
-      return <div className="layout-grid-slot" key={card.id} style={{ gridRowEnd: `span ${rowSpan}`, height: `${imageHeight}px` }}>
+    {cards.map((card, index) => {
+      const placement = placements[index];
+      const placementReady = gridMetrics.width > 0;
+      const isSelected = selected?.id === card.id;
+      return <div className="layout-grid-slot" key={card.id} style={{ ...(placementReady ? { gridColumnStart: placement.column + 1, gridRowStart: placement.rowStart, gridRowEnd: `span ${placement.rowSpan}` } : {}), height: `${placement.imageHeight}px` }}>
       <motion.div
         onClick={() => handleClick(card)}
         onKeyDown={(event) => handleKeyDown(event, card)}
-        className={`gallery-card layout-grid-card${selected?.id === card.id ? " layout-grid-selected" : lastSelected?.id === card.id ? " layout-grid-last-selected" : ""}`}
+        className={`gallery-card layout-grid-card${isSelected ? " layout-grid-selected" : ""}`}
+        style={isSelected && selectedPreviewSize ? { width: `${selectedPreviewSize.width}px`, height: `${selectedPreviewSize.height}px` } : undefined}
         layoutId={`card-${card.id}`}
         role="button"
         tabIndex={selected?.id === card.id ? -1 : 0}
         aria-label={`${selected?.id === card.id ? "收起" : "展开"}${card.label}`}
       >
-        {selected?.id === card.id && <LayoutGridSelectedCard card={selected} />}
+        {selected?.id === card.id && <LayoutGridSelectedCard card={selected} close={handleOutsideClick} />}
         <LayoutGridImage card={card} onRatio={(nextRatio) => setImageRatios((current) => current[card.id] === nextRatio ? current : { ...current, [card.id]: nextRatio })} />
-        <span className="gallery-layout-title">{card.label}</span>
+        <span className="gallery-layout-title"><b>{card.label}</b><i>查看作品</i></span>
       </motion.div>
       </div>;
     })}
@@ -1712,14 +1781,15 @@ function LayoutGrid({ cards }: { cards: LayoutGridCard[] }) {
 }
 
 function LayoutGridImage({ card, onRatio }: { card: LayoutGridCard; onRatio: (ratio: number) => void }) {
-  return <motion.img layoutId={`image-${card.id}-image`} src={card.thumbnail} className="gallery-card-image" alt={card.label} onLoad={(event) => {
+  return <motion.img layoutId={`image-${card.id}-image`} src={card.thumbnail} className="gallery-card-image" alt={card.label} loading="lazy" decoding="async" onLoad={(event) => {
     const image = event.currentTarget;
     if (image.naturalWidth > 0 && image.naturalHeight > 0) onRatio(image.naturalWidth / image.naturalHeight);
   }} />;
 }
 
-function LayoutGridSelectedCard({ card }: { card: LayoutGridCard | null }) {
+function LayoutGridSelectedCard({ card, close }: { card: LayoutGridCard | null; close: () => void }) {
   return <div className="layout-grid-selected-content">
+    <button className="gallery-preview-close" type="button" aria-label="收起作品预览" title="收起作品预览" onClick={(event) => { event.stopPropagation(); close(); }}><X size={18} strokeWidth={2.25} aria-hidden="true" /></button>
     <motion.div layoutId={`content-${card?.id}`} initial={{ opacity: 0, y: 100 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 100 }} transition={{ duration: 0.3, ease: "easeInOut" }} className="gallery-card-content layout-grid-card-content">
       {card?.content}
     </motion.div>
