@@ -107,6 +107,23 @@ const fallbackMusicPreferences: MusicPreference[] = [
   { title: "Serenade (KARINA & WINTER)", artist: "aespa", album: "SYNK : aeXIS LINE - 2026 Special Digital Single - Single", genre: "K-Pop", duration: "3:05", releaseDate: "2026-08-09", cover: "https://is1-ssl.mzstatic.com/image/thumb/Music211/v4/cc/41/23/cc4123a6-c1c0-7e86-e44a-2f0cb1f0e081/aespa_aeXIS_2026_-F.jpg/486x486bb.png", href: "https://music.apple.com/cn/album/serenade-karina-winter/6797481676?i=6797481677" },
 ];
 
+type OpenSourceTool = {
+  name: string;
+  description: string;
+  category: string;
+  githubUrl: string;
+};
+
+// Mock 数据先用于展示；后续管理后台只需替换 githubUrl，即可继续沿用卡片结构。
+const mockOpenSourceTools: OpenSourceTool[] = [
+  { name: "React", description: "构建交互式用户界面的组件库。", category: "UI", githubUrl: "https://github.com/facebook/react" },
+  { name: "Three.js", description: "在浏览器中创建 3D 场景、模型与可视化体验。", category: "3D", githubUrl: "https://github.com/mrdoob/three.js" },
+  { name: "GSAP", description: "面向网页的高性能动画与时间轴工具。", category: "Motion", githubUrl: "https://github.com/greensock/GSAP" },
+  { name: "Vite", description: "快速、轻量的现代前端开发与构建工具。", category: "Build", githubUrl: "https://github.com/vitejs/vite" },
+  { name: "Gin", description: "用于 Go 服务端开发的轻量级 Web 框架。", category: "Backend", githubUrl: "https://github.com/gin-gonic/gin" },
+  { name: "PostgreSQL", description: "可靠、可扩展的开源关系型数据库。", category: "Data", githubUrl: "https://github.com/postgres/postgres" },
+];
+
 type ContributionCell = Omit<GitHubContributionDay, "date"> & {
   date: string | null;
 };
@@ -1611,17 +1628,6 @@ function Gallery({ creations, setSelectedCreation }: { creations: Creation[]; se
   }));
 
   return <section className="gallery-showcase">
-    <header className="gallery-head">
-      <div className="gallery-heading">
-        <span className="gallery-kicker">VISUAL ARCHIVE</span>
-        <h1>创作图库</h1>
-        <p>展示 AI 生成图像、视觉研究和界面设计作品，按项目归档。</p>
-      </div>
-      <div className="gallery-count" aria-label={`共 ${creations.length} 件作品`}>
-        <strong>{String(creations.length).padStart(2, "0")}</strong>
-        <span>WORKS</span>
-      </div>
-    </header>
     <div className="gallery-rule" aria-hidden="true"><i /></div>
     {creations.length > 0 ? <LayoutGrid cards={cards} /> : <div className="gallery-empty">暂无作品</div>}
   </section>;
@@ -1920,6 +1926,7 @@ function SteamEntertainment({ overview, state, musicPreferences }: { overview: S
       </div>
     </> : <div className="steam-state"><p>{state === "loading" ? "正在同步 Steam 数据" : "Steam 数据暂不可用"}</p></div>}
     <MusicSection musicPreferences={musicPreferences} />
+    <OpenSourceToolsSection tools={mockOpenSourceTools} />
     <TravelTraceMap />
   </section>;
 }
@@ -1934,6 +1941,19 @@ function MusicSection({ musicPreferences }: { musicPreferences: MusicPreference[
       <small>{track.artist} · {track.album}</small>
       <span className="music-card-meta">{track.genre} · {track.duration} · {track.releaseDate}</span>
     </a>)}</div>
+  </section>;
+}
+
+function OpenSourceToolsSection({ tools }: { tools: OpenSourceTool[] }) {
+  return <section className="open-source-tools" aria-labelledby="open-source-tools-title">
+    <header className="open-source-tools-heading"><h2 id="open-source-tools-title">开源工具</h2></header>
+    <div className="open-source-tools-grid">
+      {tools.map((tool) => <a className="open-source-tool-card" href={tool.githubUrl} key={tool.githubUrl} target="_blank" rel="noreferrer">
+        <span className="open-source-tool-category">{tool.category}</span>
+        <div><h3>{tool.name}</h3><p>{tool.description}</p></div>
+        <ArrowUpRight size={18} aria-hidden="true" />
+      </a>)}
+    </div>
   </section>;
 }
 
