@@ -429,18 +429,21 @@ button, a { -webkit-tap-highlight-color: transparent; }
 .open-source-tools { margin-top: 72px; padding-top: 30px; border-top: 1px solid #dce3e9; }
 .open-source-tools-heading { margin-bottom: 22px; }
 .open-source-tools-heading h2 { margin: 0; color: #17202a; font-size: 1.05rem; font-weight: 850; }
-.open-source-tools-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1px; overflow: hidden; background: #dce3e9; }
-.open-source-tool-card { position: relative; display: grid; min-height: 176px; grid-template-rows: auto 1fr auto; gap: 24px; padding: 22px; overflow: hidden; color: #17202a; background: #ffffff; text-decoration: none; transition: color .28s ease, background-color .28s ease; }
-.open-source-tool-card::before { position: absolute; top: 0; right: 0; width: 62px; height: 62px; content: ""; background: #1677ff; transform: translate3d(100%, -100%, 0); transition: transform .42s cubic-bezier(.22, 1, .36, 1); }
-.open-source-tool-card:hover, .open-source-tool-card:focus-visible { color: #ffffff; background: #1268db; outline: none; }
-.open-source-tool-card:hover::before, .open-source-tool-card:focus-visible::before { transform: translate3d(0, 0, 0); }
-.open-source-tool-category { position: relative; z-index: 1; color: #1677ff; font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; font-size: .65rem; font-weight: 850; letter-spacing: .12em; text-transform: uppercase; transition: color .28s ease; }
-.open-source-tool-card div { position: relative; z-index: 1; align-self: end; }
-.open-source-tool-card h3 { margin: 0 0 8px; font-size: clamp(1.1rem, 1.55vw, 1.38rem); font-weight: 850; letter-spacing: 0; line-height: 1.1; }
-.open-source-tool-card p { margin: 0; color: #677687; font-size: .78rem; line-height: 1.65; transition: color .28s ease; }
-.open-source-tool-card > svg { position: relative; z-index: 1; justify-self: end; color: #1677ff; transition: color .28s ease, transform .32s cubic-bezier(.22, 1, .36, 1); }
-.open-source-tool-card:hover .open-source-tool-category, .open-source-tool-card:hover p, .open-source-tool-card:hover > svg, .open-source-tool-card:focus-visible .open-source-tool-category, .open-source-tool-card:focus-visible p, .open-source-tool-card:focus-visible > svg { color: #ffffff; }
-.open-source-tool-card:hover > svg, .open-source-tool-card:focus-visible > svg { transform: translate3d(3px, -3px, 0); }
+.open-source-tools-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }
+.open-source-tool-card { --tool-bg: #1677ff; --tool-corner: #91dcff; position: relative; display: flex; width: 100%; min-height: 216px; align-items: center; justify-content: center; overflow: hidden; border-radius: 15px; color: #ffffff; background: var(--tool-bg); cursor: pointer; text-decoration: none; isolation: isolate; transition: transform .28s ease, box-shadow .28s ease; }
+.open-source-tool-card::before, .open-source-tool-card::after { position: absolute; z-index: -1; display: flex; width: 20%; height: 20%; content: ""; background: var(--tool-corner); transition: all .5s cubic-bezier(.22, 1, .36, 1); }
+.open-source-tool-card::before { top: 0; right: 0; border-radius: 0 15px 0 100%; }
+.open-source-tool-card::after { bottom: 0; left: 0; border-radius: 0 100% 0 15px; }
+.open-source-tool-card:hover, .open-source-tool-card:focus-visible { outline: none; transform: translateY(-5px); box-shadow: 0 18px 34px rgba(11, 90, 194, .24); }
+.open-source-tool-card:hover::before, .open-source-tool-card:hover::after, .open-source-tool-card:focus-visible::before, .open-source-tool-card:focus-visible::after { width: 100%; height: 100%; border-radius: 15px; }
+.open-source-tool-front, .open-source-tool-hover { position: relative; z-index: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; width: 100%; padding: 28px; text-align: center; transition: opacity .28s ease, transform .42s cubic-bezier(.22, 1, .36, 1); }
+.open-source-tool-front h3 { margin: 0; color: #ffffff; font-size: clamp(1.35rem, 2vw, 1.8rem); font-weight: 850; line-height: 1.1; }
+.open-source-tool-front span { margin-top: 10px; color: rgba(255, 255, 255, .72); font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; font-size: .7rem; letter-spacing: .04em; }
+.open-source-tool-hover { position: absolute; inset: 0; gap: 24px; padding: 30px; opacity: 0; transform: translateY(12px); pointer-events: none; }
+.open-source-tool-hover p { max-width: 220px; margin: 0; color: #103f67; font-size: .9rem; font-weight: 700; line-height: 1.7; }
+.open-source-tool-hover span { display: inline-flex; align-items: center; gap: 6px; color: #103f67; font-size: .72rem; font-weight: 850; }
+.open-source-tool-card:hover .open-source-tool-front, .open-source-tool-card:focus-visible .open-source-tool-front { opacity: 0; transform: translateY(-12px); }
+.open-source-tool-card:hover .open-source-tool-hover, .open-source-tool-card:focus-visible .open-source-tool-hover { opacity: 1; transform: translateY(0); }
 .steam-profile { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 24px; padding-bottom: 24px; }
 .steam-profile h1 { margin: 0 0 9px; color: #17202a; font-size: clamp(1.7rem, 3vw, 2.45rem); font-weight: 850; letter-spacing: 0; line-height: 1.1; }
 .steam-profile div > a { color: #61717d; font-size: .82rem; font-weight: 750; text-decoration: none; }
@@ -987,6 +990,22 @@ button, a { -webkit-tap-highlight-color: transparent; }
 .admin-music-list strong { display: block; overflow: hidden; color: #17202a; font-size: .9rem; text-overflow: ellipsis; white-space: nowrap; }
 .admin-music-list p { margin: 5px 0 0; overflow: hidden; color: #6a7781; font-size: .78rem; text-overflow: ellipsis; white-space: nowrap; }
 .admin-music-list .admin-delete-button { position: static; }
+.admin-tool-manager { display: grid; gap: 18px; }
+.admin-tool-manager > header { display: flex; align-items: center; justify-content: space-between; gap: 14px; min-height: 44px; border-bottom: 1px solid #dce3e9; }
+.admin-tool-manager > header > div { display: flex; align-items: center; gap: 9px; }
+.admin-tool-manager h2 { margin: 0; color: #17202a; font-size: 1rem; font-weight: 850; }
+.admin-tool-manager > header span { display: inline-grid; min-width: 24px; height: 22px; place-items: center; padding: 0 7px; border-radius: 999px; color: #5f6d77; background: #eef2f5; font-size: .75rem; font-weight: 800; }
+.admin-tool-list { display: grid; gap: 10px; }
+.admin-tool-list article { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 18px; min-height: 120px; padding: 18px; border: 1px solid #dce3e9; border-radius: 8px; background: #ffffff; }
+.admin-tool-list article.is-hidden { opacity: .58; }
+.admin-tool-list strong { display: block; color: #17202a; font-size: 1rem; font-weight: 850; }
+.admin-tool-list article > div > span { display: block; margin-top: 5px; color: #1677ff; font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; font-size: .72rem; font-weight: 700; }
+.admin-tool-list p { margin: 10px 0 7px; color: #5f6d77; font-size: .82rem; line-height: 1.55; }
+.admin-tool-list a { display: block; overflow: hidden; color: #778691; font-size: .72rem; text-overflow: ellipsis; white-space: nowrap; }
+.admin-tool-list a:hover { color: #1268db; }
+.admin-tool-list .admin-secondary-button { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.admin-tool-url-field { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
+.admin-tool-url-field button { min-height: 40px; }
 .admin-sync-error { margin: 0; color: #b33737; font-size: .84rem; font-weight: 750; }
 .admin-steam-sync-stats { display: grid; grid-template-columns: repeat(2, minmax(0, 180px)); gap: 10px; }
 .admin-steam-sync-stats > div { display: grid; gap: 4px; min-height: 86px; padding: 16px; border: 1px solid #dce3e9; border-radius: 8px; background: #ffffff; }
@@ -1041,6 +1060,7 @@ button, a { -webkit-tap-highlight-color: transparent; }
 @media (max-width: 520px) { .entertainment-music { margin-top: 54px; padding-top: 24px; } .music-grid { grid-template-columns: 1fr; gap: 14px; } .music-card { max-width: 220px; height: 321px; justify-self: center; } }
 @media (max-width: 800px) { .open-source-tools { margin-top: 54px; padding-top: 24px; } .open-source-tools-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 520px) { .open-source-tools { margin-top: 54px; padding-top: 24px; } .open-source-tools-grid { grid-template-columns: 1fr; } .open-source-tool-card { min-height: 150px; padding: 20px; } }
+@media (max-width: 620px) { .admin-tool-manager > header { align-items: flex-start; flex-direction: column; } .admin-tool-manager > header .admin-primary-button { width: 100%; justify-content: center; } .admin-tool-list article { grid-template-columns: 1fr; align-items: start; } .admin-tool-list article .admin-secondary-button { width: 100%; justify-content: center; } .admin-tool-url-field { grid-template-columns: 1fr; } .admin-tool-url-field button { width: 100%; justify-content: center; } }
 @media (max-width: 800px) { .home-social-tooltip { right: 92px; bottom: 86px; } }
 @media (max-width: 520px) { .home-social-tooltip { right: 82px; bottom: 70px; } }
 

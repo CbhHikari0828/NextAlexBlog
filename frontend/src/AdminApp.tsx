@@ -1,5 +1,5 @@
 import { ChangeEvent, FormEvent, useEffect, useState } from "react";
-import { ArrowLeft, BookOpen, Code2, Eye, FileText, Gamepad2, GitBranch, Image, LayoutDashboard, MessageSquare, Music2, RefreshCw, Save, Send, Trash2, Upload, X } from "lucide-react";
+import { ArrowLeft, BookOpen, Code2, Eye, EyeOff, FileText, Gamepad2, GitBranch, Image, LayoutDashboard, MessageSquare, Music2, Plus, RefreshCw, Save, Send, Trash2, Upload, Wrench, X } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
@@ -14,6 +14,7 @@ const adminNavItems = [
   { label: "项目同步", icon: Code2 },
   { label: "Steam 同步", icon: Gamepad2 },
   { label: "音乐管理", icon: Music2 },
+  { label: "开源工具", icon: Wrench },
   { label: "留言管理", icon: MessageSquare },
 ] as const;
 
@@ -94,6 +95,8 @@ type MusicPreference = {
   cover: string;
   href: string;
 };
+
+type OpenSourceTool = { id: number; name: string; author: string; description: string; githubUrl: string; hidden: boolean };
 
 type GalleryCreation = {
   id: number;
@@ -218,6 +221,7 @@ function AdminApp() {
         {activeSection === "项目同步" && <ProjectSync back={() => openSection("总览")} />}
         {activeSection === "Steam 同步" && <SteamSync back={() => openSection("总览")} />}
         {activeSection === "音乐管理" && <MusicManager back={() => openSection("总览")} />}
+        {activeSection === "开源工具" && <OpenSourceToolsManager back={() => openSection("总览")} />}
         {activeSection === "留言管理" && <GuestbookManager back={() => openSection("总览")} />}
       </section>
     </main>
@@ -549,6 +553,61 @@ function MusicManager({ back }: { back: () => void }) {
   }
 
   return <section className="admin-manager-screen"><WorkspaceHeader title="音乐管理" back={back} /><div className="admin-music-manager"><form className="admin-music-import" onSubmit={importMusic}><label>音乐链接<input aria-label="音乐链接" type="url" value={url} onChange={(event) => { setURL(event.target.value); setImportState("idle"); }} placeholder="Apple Music、QQ 音乐或网易云音乐链接" required /></label><button className="admin-primary-button" type="submit" disabled={importState === "importing"}>{importState === "importing" ? <RefreshCw className="is-spinning" size={16} aria-hidden="true" /> : <Music2 size={16} aria-hidden="true" />}{importState === "importing" ? "读取中" : "导入音乐"}</button></form>{importState === "done" && <p className="admin-music-status" role="status">已导入</p>}{importState === "failed" && <p className="admin-sync-error" role="status">导入失败</p>}<div className="admin-music-list">{preferences.map((preference) => <article key={preference.id}><img src={preference.cover} alt="" /><div><strong>{preference.title}</strong><p>{preference.artist}{preference.album ? ` · ${preference.album}` : ""}</p></div><button className="admin-delete-button" type="button" aria-label={`删除 ${preference.title}`} title="删除" onClick={() => deleteMusic(preference.id)}><Trash2 size={16} aria-hidden="true" /></button></article>)}</div></div></section>;
+}
+
+function OpenSourceToolsManager({ back }: { back: () => void }) {
+  const [tools, setTools] = useState<OpenSourceTool[]>([]);
+  const [mode, setMode] = useState<"list" | "create">("list");
+  const [githubUrl, setGitHubURL] = useState("");
+  const [name, setName] = useState("");
+  const [author, setAuthor] = useState("");
+  const [description, setDescription] = useState("");
+  const [state, setState] = useState<"idle" | "loading" | "saving" | "failed" | "saved">("idle");
+
+  const loadTools = () => fetch("/api/admin/open-source-tools", { cache: "no-store" })
+    .then((response) => response.ok ? response.json() as Promise<OpenSourceTool[]> : Promise.reject(new Error("tools list failed")))
+    .then((data) => setTools(Array.isArray(data) ? data : []))
+    .catch(() => setState("failed"));
+
+  useEffect(() => { void loadTools(); }, []);
+
+  async function fetchMetadata() {
+    if (!githubUrl.trim()) return;
+    setState("loading");
+    try {
+      const response = await fetch("/api/admin/open-source-tools/metadata", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ githubUrl: githubUrl.trim() }) });
+      if (!response.ok) throw new Error("metadata failed");
+      const data = await response.json() as Pick<OpenSourceTool, "name" | "author" | "githubUrl">;
+      if (!data.name || !data.author || !data.githubUrl) throw new Error("invalid metadata");
+      setName(data.name); setAuthor(data.author); setGitHubURL(data.githubUrl); setState("idle");
+    } catch { setState("failed"); }
+  }
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!githubUrl.trim() || !description.trim()) return;
+    setState("saving");
+    try {
+      const response = await fetch("/api/admin/open-source-tools", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ githubUrl: githubUrl.trim(), description: description.trim() }) });
+      if (!response.ok) throw new Error("save failed");
+      const saved = await response.json() as OpenSourceTool;
+      setTools((current) => [saved, ...current.filter((tool) => tool.id !== saved.id)]);
+      setGitHubURL(""); setName(""); setAuthor(""); setDescription(""); setState("saved"); setMode("list");
+    } catch { setState("failed"); }
+  }
+
+  async function updateVisibility(tool: OpenSourceTool) {
+    try {
+      const response = await fetch(`/api/admin/open-source-tools/${tool.id}/visibility`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ hidden: !tool.hidden }) });
+      if (!response.ok) throw new Error("visibility failed");
+      const saved = await response.json() as OpenSourceTool;
+      setTools((current) => current.map((item) => item.id === saved.id ? saved : item));
+    } catch { setState("failed"); }
+  }
+
+  if (mode === "create") return <section className="admin-editor-screen"><WorkspaceHeader title="添加开源工具" back={() => setMode("list")} /><form className="admin-form-editor" onSubmit={submit}><div className="admin-form-grid"><label className="wide">GitHub 项目地址<div className="admin-tool-url-field"><input type="url" value={githubUrl} onChange={(event) => { setGitHubURL(event.target.value); setName(""); setAuthor(""); setState("idle"); }} onBlur={() => { void fetchMetadata(); }} placeholder="https://github.com/owner/repository" required /><button className="admin-secondary-button" type="button" onClick={() => { void fetchMetadata(); }} disabled={state === "loading"}>{state === "loading" ? <RefreshCw className="is-spinning" size={16} /> : <RefreshCw size={16} />}获取信息</button></div></label><label>项目名称<input value={name} readOnly placeholder="根据项目地址自动获取" /></label><label>作者<input value={author} readOnly placeholder="根据项目地址自动获取" /></label><label className="wide">项目描述<textarea value={description} onChange={(event) => setDescription(event.target.value)} rows={7} placeholder="填写你想展示的工具用途" required /></label></div><footer className="admin-editor-footer"><span aria-live="polite">{state === "failed" ? "GitHub 信息读取或保存失败" : ""}</span><div><button className="admin-primary-button" type="submit" disabled={state === "saving"}>{state === "saving" ? <RefreshCw className="is-spinning" size={16} /> : <Send size={16} />}保存工具</button></div></footer></form></section>;
+
+  return <section className="admin-manager-screen"><WorkspaceHeader title="开源工具" back={back} /><div className="admin-tool-manager"><header><div><h2>已添加工具</h2><span>{tools.length}</span></div><button className="admin-primary-button" type="button" onClick={() => { setState("idle"); setMode("create"); }}><Plus size={16} />添加工具</button></header>{state === "failed" && <p className="admin-sync-error" role="status">操作失败，请稍后重试</p>}<div className="admin-tool-list">{tools.length > 0 ? tools.map((tool) => <article key={tool.id} className={tool.hidden ? "is-hidden" : ""}><div><strong>{tool.name}</strong><span>by {tool.author}</span><p>{tool.description}</p><a href={tool.githubUrl} target="_blank" rel="noreferrer">{tool.githubUrl}</a></div><button className="admin-secondary-button" type="button" onClick={() => { void updateVisibility(tool); }}>{tool.hidden ? <><Eye size={16} />显示</> : <><EyeOff size={16} />隐藏</>}</button></article>) : <p className="admin-empty-state">暂无开源工具</p>}</div></div></section>;
 }
 
 function GuestbookManager({ back }: { back: () => void }) {

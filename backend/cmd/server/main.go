@@ -74,6 +74,16 @@ type musicPreference struct {
 	ExternalURL string `json:"href"`
 }
 
+type openSourceTool struct {
+	ID          int64     `json:"id"`
+	Name        string    `json:"name"`
+	Author      string    `json:"author"`
+	Description string    `json:"description"`
+	GitHubURL   string    `json:"githubUrl"`
+	Hidden      bool      `json:"hidden"`
+	CreatedAt   time.Time `json:"createdAt"`
+}
+
 type musicPreferenceStore interface {
 	ListMusicPreferences(context.Context) ([]musicPreference, error)
 	SaveMusicPreference(context.Context, musicPreference) (musicPreference, error)
@@ -677,6 +687,9 @@ func main() {
 	if err := ensureNotesTable(context.Background(), pool); err != nil {
 		log.Fatalf("ensure notes table: %v", err)
 	}
+	if err := ensureOpenSourceToolsTable(context.Background(), pool); err != nil {
+		log.Fatalf("ensure open source tools table: %v", err)
+	}
 	galleryStorage, storageErr := newOSSGalleryImageStorage()
 	if storageErr != nil && !errors.Is(storageErr, errGalleryStorageNotConfigured) {
 		log.Printf("gallery image storage unavailable: %v", storageErr)
@@ -714,6 +727,11 @@ func main() {
 	noteStore := postgresNoteStore{pool: pool}
 	router.GET("/api/notes", notesHandler(noteStore))
 	router.POST("/api/admin/notes", noteCreateHandler(noteStore))
+	router.GET("/api/open-source-tools", openSourceToolsHandler(pool, false))
+	router.GET("/api/admin/open-source-tools", openSourceToolsHandler(pool, true))
+	router.POST("/api/admin/open-source-tools/metadata", openSourceToolMetadataHandler(githubClient))
+	router.POST("/api/admin/open-source-tools", openSourceToolCreateHandler(githubClient, pool))
+	router.PATCH("/api/admin/open-source-tools/:id/visibility", openSourceToolVisibilityHandler(pool))
 
 	server := &http.Server{
 		Addr:              ":" + port,
@@ -869,6 +887,21 @@ func ensureNotesTable(ctx context.Context, pool *pgxpool.Pool) error {
 	_, err := pool.Exec(ctx, `
 		CREATE INDEX IF NOT EXISTS notes_note_date_idx
 		ON notes (note_date DESC, id DESC)
+	`)
+	return err
+}
+
+func ensureOpenSourceToolsTable(ctx context.Context, pool *pgxpool.Pool) error {
+	_, err := pool.Exec(ctx, `
+		CREATE TABLE IF NOT EXISTS open_source_tools (
+			id BIGSERIAL PRIMARY KEY,
+			name TEXT NOT NULL,
+			author TEXT NOT NULL,
+			description TEXT NOT NULL DEFAULT '',
+			github_url TEXT NOT NULL UNIQUE,
+			hidden BOOLEAN NOT NULL DEFAULT FALSE,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)
 	`)
 	return err
 }
@@ -1568,6 +1601,148 @@ func musicDeleteHandler(store musicPreferenceStore) gin.HandlerFunc {
 		}
 		c.Status(http.StatusNoContent)
 	}
+}
+
+func openSourceToolsHandler(pool *pgxpool.Pool, includeHidden bool) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		query := `SELECT id, name, author, description, github_url, hidden, created_at FROM open_source_tools`
+		if !includeHidden {
+			query += ` WHERE hidden = FALSE`
+		}
+		query += ` ORDER BY created_at DESC, id DESC`
+		rows, err := pool.Query(c.Request.Context(), query)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "open source tools are temporarily unavailable"})
+			return
+		}
+		defer rows.Close()
+		tools := make([]openSourceTool, 0)
+		for rows.Next() {
+			var tool openSourceTool
+			if err := rows.Scan(&tool.ID, &tool.Name, &tool.Author, &tool.Description, &tool.GitHubURL, &tool.Hidden, &tool.CreatedAt); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "open source tools could not be read"})
+				return
+			}
+			tools = append(tools, tool)
+		}
+		if err := rows.Err(); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "open source tools could not be read"})
+			return
+		}
+		c.JSON(http.StatusOK, tools)
+	}
+}
+
+func openSourceToolMetadataHandler(client *http.Client) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var payload struct {
+			GitHubURL string `json:"githubUrl"`
+		}
+		if err := c.ShouldBindJSON(&payload); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "a GitHub project URL is required"})
+			return
+		}
+		name, author, canonicalURL, err := fetchGitHubRepositoryMetadata(c.Request.Context(), client, payload.GitHubURL)
+		if err != nil {
+			c.JSON(http.StatusBadGateway, gin.H{"error": "GitHub project metadata could not be read"})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"name": name, "author": author, "githubUrl": canonicalURL})
+	}
+}
+
+func openSourceToolCreateHandler(client *http.Client, pool *pgxpool.Pool) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var payload struct {
+			GitHubURL   string `json:"githubUrl"`
+			Description string `json:"description"`
+		}
+		if err := c.ShouldBindJSON(&payload); err != nil || strings.TrimSpace(payload.Description) == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "a GitHub project URL and description are required"})
+			return
+		}
+		name, author, canonicalURL, err := fetchGitHubRepositoryMetadata(c.Request.Context(), client, payload.GitHubURL)
+		if err != nil {
+			c.JSON(http.StatusBadGateway, gin.H{"error": "GitHub project metadata could not be read"})
+			return
+		}
+		var tool openSourceTool
+		err = pool.QueryRow(c.Request.Context(), `INSERT INTO open_source_tools (name, author, description, github_url) VALUES ($1, $2, $3, $4) ON CONFLICT (github_url) DO UPDATE SET name = EXCLUDED.name, author = EXCLUDED.author, description = EXCLUDED.description RETURNING id, name, author, description, github_url, hidden, created_at`, name, author, strings.TrimSpace(payload.Description), canonicalURL).Scan(&tool.ID, &tool.Name, &tool.Author, &tool.Description, &tool.GitHubURL, &tool.Hidden, &tool.CreatedAt)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "open source tool could not be saved"})
+			return
+		}
+		c.JSON(http.StatusOK, tool)
+	}
+}
+
+func openSourceToolVisibilityHandler(pool *pgxpool.Pool) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+		if err != nil || id < 1 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid tool id"})
+			return
+		}
+		var payload struct {
+			Hidden bool `json:"hidden"`
+		}
+		if err := c.ShouldBindJSON(&payload); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "hidden is required"})
+			return
+		}
+		var tool openSourceTool
+		err = pool.QueryRow(c.Request.Context(), `UPDATE open_source_tools SET hidden = $2 WHERE id = $1 RETURNING id, name, author, description, github_url, hidden, created_at`, id, payload.Hidden).Scan(&tool.ID, &tool.Name, &tool.Author, &tool.Description, &tool.GitHubURL, &tool.Hidden, &tool.CreatedAt)
+		if errors.Is(err, pgx.ErrNoRows) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "open source tool not found"})
+			return
+		}
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "open source tool could not be updated"})
+			return
+		}
+		c.JSON(http.StatusOK, tool)
+	}
+}
+
+func fetchGitHubRepositoryMetadata(ctx context.Context, client *http.Client, rawURL string) (string, string, string, error) {
+	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil || parsed.Scheme != "https" || !strings.EqualFold(parsed.Hostname(), "github.com") {
+		return "", "", "", errors.New("invalid GitHub URL")
+	}
+	parts := strings.Split(strings.Trim(strings.TrimSuffix(parsed.Path, ".git"), "/"), "/")
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return "", "", "", errors.New("invalid GitHub repository URL")
+	}
+	endpoint := fmt.Sprintf("https://api.github.com/repos/%s/%s", url.PathEscape(parts[0]), url.PathEscape(parts[1]))
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return "", "", "", err
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("User-Agent", "NextAlexBlog/1.0")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", "", "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", "", "", fmt.Errorf("GitHub returned %s", resp.Status)
+	}
+	var data struct {
+		Name    string `json:"name"`
+		HTMLURL string `json:"html_url"`
+		Owner   struct {
+			Login string `json:"login"`
+		} `json:"owner"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&data); err != nil {
+		return "", "", "", err
+	}
+	if data.Name == "" || data.Owner.Login == "" || data.HTMLURL == "" {
+		return "", "", "", errors.New("incomplete GitHub repository metadata")
+	}
+	return data.Name, data.Owner.Login, data.HTMLURL, nil
 }
 
 func galleryCreationsHandler(store galleryCreationStore) gin.HandlerFunc {

@@ -108,20 +108,22 @@ const fallbackMusicPreferences: MusicPreference[] = [
 ];
 
 type OpenSourceTool = {
+  id?: number;
   name: string;
+  author: string;
   description: string;
-  category: string;
   githubUrl: string;
+  hidden?: boolean;
 };
 
 // Mock 数据先用于展示；后续管理后台只需替换 githubUrl，即可继续沿用卡片结构。
 const mockOpenSourceTools: OpenSourceTool[] = [
-  { name: "React", description: "构建交互式用户界面的组件库。", category: "UI", githubUrl: "https://github.com/facebook/react" },
-  { name: "Three.js", description: "在浏览器中创建 3D 场景、模型与可视化体验。", category: "3D", githubUrl: "https://github.com/mrdoob/three.js" },
-  { name: "GSAP", description: "面向网页的高性能动画与时间轴工具。", category: "Motion", githubUrl: "https://github.com/greensock/GSAP" },
-  { name: "Vite", description: "快速、轻量的现代前端开发与构建工具。", category: "Build", githubUrl: "https://github.com/vitejs/vite" },
-  { name: "Gin", description: "用于 Go 服务端开发的轻量级 Web 框架。", category: "Backend", githubUrl: "https://github.com/gin-gonic/gin" },
-  { name: "PostgreSQL", description: "可靠、可扩展的开源关系型数据库。", category: "Data", githubUrl: "https://github.com/postgres/postgres" },
+  { name: "React", author: "Meta Open Source", description: "构建交互式用户界面的组件库。", githubUrl: "https://github.com/facebook/react" },
+  { name: "Three.js", author: "mrdoob", description: "在浏览器中创建 3D 场景、模型与可视化体验。", githubUrl: "https://github.com/mrdoob/three.js" },
+  { name: "GSAP", author: "GreenSock", description: "面向网页的高性能动画与时间轴工具。", githubUrl: "https://github.com/greensock/GSAP" },
+  { name: "Vite", author: "Vite Team", description: "快速、轻量的现代前端开发与构建工具。", githubUrl: "https://github.com/vitejs/vite" },
+  { name: "Gin", author: "gin-gonic", description: "用于 Go 服务端开发的轻量级 Web 框架。", githubUrl: "https://github.com/gin-gonic/gin" },
+  { name: "PostgreSQL", author: "PostgreSQL", description: "可靠、可扩展的开源关系型数据库。", githubUrl: "https://github.com/postgres/postgres" },
 ];
 
 type ContributionCell = Omit<GitHubContributionDay, "date"> & {
@@ -795,6 +797,7 @@ function PublicApp() {
   const [steamOverview, setSteamOverview] = useState<SteamOverview | null>(null);
   const [steamState, setSteamState] = useState<SteamState>("idle");
   const [musicPreferences, setMusicPreferences] = useState<MusicPreference[]>(fallbackMusicPreferences);
+  const [openSourceTools, setOpenSourceTools] = useState<OpenSourceTool[]>(mockOpenSourceTools);
   const [developerToolsOpen, setDeveloperToolsOpen] = useState(false);
   const [copyNoticeVisible, setCopyNoticeVisible] = useState(false);
   const [activeCategory, setActiveCategory] = useState("全部文章");
@@ -970,6 +973,15 @@ function PublicApp() {
   }, []);
 
   useEffect(() => {
+    const controller = new AbortController();
+    fetch("/api/open-source-tools", { signal: controller.signal })
+      .then((response) => response.ok ? response.json() as Promise<OpenSourceTool[]> : Promise.reject(new Error("Open source tools request failed")))
+      .then((data) => { if (Array.isArray(data)) setOpenSourceTools(data.filter((tool) => !tool.hidden)); })
+      .catch((error: unknown) => { if (error instanceof DOMException && error.name === "AbortError") return; });
+    return () => controller.abort();
+  }, []);
+
+  useEffect(() => {
     let hideCopyNotice: number | undefined;
 
     const showCopyNotice = () => {
@@ -1112,7 +1124,7 @@ function PublicApp() {
         {view === "notes" && <Notes notes={publishedNotes} setSelectedNote={openNote} />}
         {view === "gallery" && <Gallery creations={publishedCreations} setSelectedCreation={openCreation} />}
         {view === "studio" && <Studio contributions={githubContributions} contributionState={contributionState} repositories={githubRepositories} repositoryState={repositoryState} profile={githubProfile} profileState={profileState} />}
-        {view === "entertainment" && <SteamEntertainment overview={steamOverview} state={steamState} musicPreferences={musicPreferences} />}
+        {view === "entertainment" && <SteamEntertainment overview={steamOverview} state={steamState} musicPreferences={musicPreferences} openSourceTools={openSourceTools} />}
         {view === "guestbook" && <Guestbook visitor={visitor} message={message} setVisitor={setVisitor} setMessage={setMessage} comments={comments} submitMessage={submitMessage} />}
       </PageStage>
 
@@ -1909,7 +1921,7 @@ function Studio({ contributions, contributionState, repositories, repositoryStat
   </section>;
 }
 
-function SteamEntertainment({ overview, state, musicPreferences }: { overview: SteamOverview | null; state: SteamState; musicPreferences: MusicPreference[] }) {
+function SteamEntertainment({ overview, state, musicPreferences, openSourceTools }: { overview: SteamOverview | null; state: SteamState; musicPreferences: MusicPreference[]; openSourceTools: OpenSourceTool[] }) {
   const showSteam = state === "ready" && overview !== null;
   const recentGames = overview?.recentlyPlayed.filter((game) => !isHiddenSteamGame(game)) ?? [];
   const libraryGames = overview?.games.filter((game) => !isHiddenSteamGame(game)) ?? [];
@@ -1926,7 +1938,7 @@ function SteamEntertainment({ overview, state, musicPreferences }: { overview: S
       </div>
     </> : <div className="steam-state"><p>{state === "loading" ? "正在同步 Steam 数据" : "Steam 数据暂不可用"}</p></div>}
     <MusicSection musicPreferences={musicPreferences} />
-    <OpenSourceToolsSection tools={mockOpenSourceTools} />
+    <OpenSourceToolsSection tools={openSourceTools} />
     <TravelTraceMap />
   </section>;
 }
@@ -1949,9 +1961,8 @@ function OpenSourceToolsSection({ tools }: { tools: OpenSourceTool[] }) {
     <header className="open-source-tools-heading"><h2 id="open-source-tools-title">开源工具</h2></header>
     <div className="open-source-tools-grid">
       {tools.map((tool) => <a className="open-source-tool-card" href={tool.githubUrl} key={tool.githubUrl} target="_blank" rel="noreferrer">
-        <span className="open-source-tool-category">{tool.category}</span>
-        <div><h3>{tool.name}</h3><p>{tool.description}</p></div>
-        <ArrowUpRight size={18} aria-hidden="true" />
+        <div className="open-source-tool-front"><h3>{tool.name}</h3><span>by {tool.author}</span></div>
+        <div className="open-source-tool-hover"><p>{tool.description}</p><span>查看 GitHub <ArrowUpRight size={16} aria-hidden="true" /></span></div>
       </a>)}
     </div>
   </section>;
