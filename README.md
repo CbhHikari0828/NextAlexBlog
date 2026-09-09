@@ -35,9 +35,9 @@ The current frontend is a content-first demo with local sample data. It includes
 - Notes: short-form personal notes and fragments.
 - Creation gallery: AI image and visual experiment showcase.
 - Creation center: AI programming project statuses and project details.
-- Guestbook: visitor name/message form with browser `localStorage` persistence.
+- Guestbook: visitor messages persist in PostgreSQL and can send asynchronous Gmail SMTP notifications.
 
-Article details, creation metadata, authentication, and guestbook persistence are intentionally left as the next Gin API integration step. The frontend still checks `/api/health` and displays whether the backend is online; the demo content does not depend on that API yet.
+Article details, creation metadata, and authentication remain future Gin API integrations. The frontend checks `/api/health` and uses the guestbook API when the backend is online.
 
 The PostgreSQL service is available to the host backend at `localhost:55432` by default. Set `POSTGRES_PORT` and the matching `DATABASE_URL` in `.env` to use another port. Before starting containers, verify the selected host port is free; do not stop unrelated services to reclaim it. The default development connection string is in `.env.example`.
 

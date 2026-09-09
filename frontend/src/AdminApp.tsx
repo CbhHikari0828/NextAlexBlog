@@ -55,9 +55,11 @@ type SimplePublisherConfig = {
 };
 
 type GuestbookMessage = {
+  id?: number;
   name: string;
   body: string;
   date: string;
+  createdAt?: string;
   color?: string;
 };
 
@@ -611,21 +613,37 @@ function OpenSourceToolsManager({ back }: { back: () => void }) {
 }
 
 function GuestbookManager({ back }: { back: () => void }) {
-  const [messages, setMessages] = useState<GuestbookMessage[]>(() => {
-    try {
-      return JSON.parse(localStorage.getItem("alex-guestbook") || "[]") as GuestbookMessage[];
-    } catch {
-      return [];
-    }
-  });
+  const [messages, setMessages] = useState<GuestbookMessage[]>([]);
 
-  function removeMessage(index: number) {
+  useEffect(() => {
+    const controller = new AbortController();
+    fetch("/api/guestbook/messages", { signal: controller.signal })
+      .then((response) => {
+        if (!response.ok) throw new Error("guestbook request failed");
+        return response.json() as Promise<GuestbookMessage[]>;
+      })
+      .then(setMessages)
+      .catch(() => {
+        try {
+          setMessages(JSON.parse(localStorage.getItem("alex-guestbook") || "[]") as GuestbookMessage[]);
+        } catch {
+          setMessages([]);
+        }
+      });
+    return () => controller.abort();
+  }, []);
+
+  async function removeMessage(message: GuestbookMessage, index: number) {
+    if (message.id) {
+      const response = await fetch(`/api/admin/guestbook/messages/${message.id}`, { method: "DELETE" });
+      if (!response.ok) return;
+    }
     const next = messages.filter((_, messageIndex) => messageIndex !== index);
     setMessages(next);
     localStorage.setItem("alex-guestbook", JSON.stringify(next));
   }
 
-  return <section className="admin-manager-screen"><WorkspaceHeader title="留言管理" back={back} /><div className="admin-message-list">{messages.length > 0 ? messages.map((message, index) => <article className="admin-message-row" key={`${message.name}-${message.date}-${index}`}><div><strong>{message.name}</strong><time>{message.date}</time></div><p>{message.body}</p><button className="admin-delete-button" type="button" aria-label={`删除 ${message.name} 的留言`} title="删除" onClick={() => removeMessage(index)}><Trash2 size={16} aria-hidden="true" /></button></article>) : <p className="admin-empty-state">暂无留言</p>}</div></section>;
+  return <section className="admin-manager-screen"><WorkspaceHeader title="留言管理" back={back} /><div className="admin-message-list">{messages.length > 0 ? messages.map((message, index) => <article className="admin-message-row" key={`${message.id ?? message.name}-${message.date}-${index}`}><div><strong>{message.name}</strong><time>{message.date || message.createdAt || ""}</time></div><p>{message.body}</p><button className="admin-delete-button" type="button" aria-label={`删除 ${message.name} 的留言`} title="删除" onClick={() => { void removeMessage(message, index); }}><Trash2 size={16} aria-hidden="true" /></button></article>) : <p className="admin-empty-state">暂无留言</p>}</div></section>;
 }
 
 export default AdminApp;

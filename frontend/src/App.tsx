@@ -176,6 +176,7 @@ type NoteRecord = {
 };
 
 type GuestbookComment = {
+  id?: number;
   name: string;
   body: string;
   date: string;
@@ -825,6 +826,29 @@ function PublicApp() {
   });
 
   useEffect(() => {
+    const controller = new AbortController();
+    fetch("/api/guestbook/messages", { signal: controller.signal })
+      .then((response) => {
+        if (!response.ok) throw new Error("Guestbook request failed");
+        return response.json() as Promise<Array<{ id: number; name: string; body: string; color: string; createdAt: string }>>;
+      })
+      .then((records) => {
+        if (!Array.isArray(records)) throw new Error("Invalid guestbook response");
+        setComments(records.map((record) => ({
+          id: record.id,
+          name: record.name,
+          body: record.body,
+          color: noteColors.includes(record.color as NoteColor) ? record.color : "ice",
+          date: new Intl.DateTimeFormat("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }).format(new Date(record.createdAt)),
+        })));
+      })
+      .catch((error: unknown) => {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+      });
+    return () => controller.abort();
+  }, []);
+
+  useEffect(() => {
     fetch("/api/health")
       .then((response) => {
         if (!response.ok) throw new Error("API request failed");
@@ -1056,14 +1080,26 @@ function PublicApp() {
     });
   }
 
-  function submitMessage(event: FormEvent<HTMLFormElement>, color: NoteColor) {
+  async function submitMessage(event: FormEvent<HTMLFormElement>, color: NoteColor) {
     event.preventDefault();
     if (!message.trim() || !visitor.trim()) return;
-    const next = [{ name: visitor.trim(), body: message.trim(), date: "刚刚", color }, ...comments];
-    setComments(next);
-    localStorage.setItem("alex-guestbook", JSON.stringify(next));
-    setMessage("");
-    setVisitor("");
+    const payload = { name: visitor.trim(), body: message.trim(), color };
+    try {
+      const response = await fetch("/api/guestbook/messages", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+      if (!response.ok) throw new Error("Guestbook submission failed");
+      const saved = await response.json() as { id: number; name: string; body: string; color: string; createdAt: string };
+      const next = [{ id: saved.id, name: saved.name, body: saved.body, date: "刚刚", color: saved.color }, ...comments];
+      setComments(next);
+      localStorage.setItem("alex-guestbook", JSON.stringify(next));
+      setMessage("");
+      setVisitor("");
+    } catch {
+      const next = [{ name: payload.name, body: payload.body, date: "刚刚", color }, ...comments];
+      setComments(next);
+      localStorage.setItem("alex-guestbook", JSON.stringify(next));
+      setMessage("");
+      setVisitor("");
+    }
   }
 
   const viewTitle: Record<View, string> = {

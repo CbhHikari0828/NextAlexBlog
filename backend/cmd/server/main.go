@@ -5,13 +5,17 @@ import (
 	"bytes"
 	"context"
 	cryptorand "crypto/rand"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log"
+	"mime"
 	"mime/multipart"
+	"net"
 	"net/http"
+	"net/smtp"
 	"net/url"
 	"os"
 	"path"
@@ -121,6 +125,66 @@ type noteRecord struct {
 type noteStore interface {
 	ListNotes(context.Context) ([]noteRecord, error)
 	SaveNote(context.Context, noteRecord) (noteRecord, error)
+}
+
+type guestbookMessage struct {
+	ID        int64     `json:"id"`
+	Name      string    `json:"name"`
+	Body      string    `json:"body"`
+	Color     string    `json:"color"`
+	CreatedAt time.Time `json:"createdAt"`
+}
+
+type guestbookMessageStore struct {
+	pool *pgxpool.Pool
+}
+
+func (store guestbookMessageStore) List(ctx context.Context) ([]guestbookMessage, error) {
+	rows, err := store.pool.Query(ctx, `
+		SELECT id, name, body, color, created_at
+		FROM guestbook_messages
+		ORDER BY created_at DESC, id DESC
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("list guestbook messages: %w", err)
+	}
+	defer rows.Close()
+
+	messages := make([]guestbookMessage, 0)
+	for rows.Next() {
+		var message guestbookMessage
+		if err := rows.Scan(&message.ID, &message.Name, &message.Body, &message.Color, &message.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scan guestbook message: %w", err)
+		}
+		messages = append(messages, message)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate guestbook messages: %w", err)
+	}
+	return messages, nil
+}
+
+func (store guestbookMessageStore) Save(ctx context.Context, message guestbookMessage) (guestbookMessage, error) {
+	err := store.pool.QueryRow(ctx, `
+		INSERT INTO guestbook_messages (name, body, color)
+		VALUES ($1, $2, $3)
+		RETURNING id, name, body, color, created_at
+	`, message.Name, message.Body, message.Color).Scan(&message.ID, &message.Name, &message.Body, &message.Color, &message.CreatedAt)
+	if err != nil {
+		return guestbookMessage{}, fmt.Errorf("save guestbook message: %w", err)
+	}
+	return message, nil
+}
+
+func (store guestbookMessageStore) Delete(ctx context.Context, id int64) error {
+	result, err := store.pool.Exec(ctx, `DELETE FROM guestbook_messages WHERE id = $1`, id)
+	if err != nil {
+		return fmt.Errorf("delete guestbook message: %w", err)
+	}
+	if result.RowsAffected() == 0 {
+		return pgx.ErrNoRows
+	}
+	return nil
 }
 
 type postgresNoteStore struct {
@@ -690,6 +754,9 @@ func main() {
 	if err := ensureOpenSourceToolsTable(context.Background(), pool); err != nil {
 		log.Fatalf("ensure open source tools table: %v", err)
 	}
+	if err := ensureGuestbookMessagesTable(context.Background(), pool); err != nil {
+		log.Fatalf("ensure guestbook messages table: %v", err)
+	}
 	galleryStorage, storageErr := newOSSGalleryImageStorage()
 	if storageErr != nil && !errors.Is(storageErr, errGalleryStorageNotConfigured) {
 		log.Printf("gallery image storage unavailable: %v", storageErr)
@@ -732,6 +799,10 @@ func main() {
 	router.POST("/api/admin/open-source-tools/metadata", openSourceToolMetadataHandler(githubClient))
 	router.POST("/api/admin/open-source-tools", openSourceToolCreateHandler(githubClient, pool))
 	router.PATCH("/api/admin/open-source-tools/:id/visibility", openSourceToolVisibilityHandler(pool))
+	guestbookStore := guestbookMessageStore{pool: pool}
+	router.GET("/api/guestbook/messages", guestbookMessagesHandler(guestbookStore))
+	router.POST("/api/guestbook/messages", guestbookMessageCreateHandler(guestbookStore))
+	router.DELETE("/api/admin/guestbook/messages/:id", guestbookMessageDeleteHandler(guestbookStore))
 
 	server := &http.Server{
 		Addr:              ":" + port,
@@ -900,6 +971,19 @@ func ensureOpenSourceToolsTable(ctx context.Context, pool *pgxpool.Pool) error {
 			description TEXT NOT NULL DEFAULT '',
 			github_url TEXT NOT NULL UNIQUE,
 			hidden BOOLEAN NOT NULL DEFAULT FALSE,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)
+	`)
+	return err
+}
+
+func ensureGuestbookMessagesTable(ctx context.Context, pool *pgxpool.Pool) error {
+	_, err := pool.Exec(ctx, `
+		CREATE TABLE IF NOT EXISTS guestbook_messages (
+			id BIGSERIAL PRIMARY KEY,
+			name TEXT NOT NULL,
+			body TEXT NOT NULL,
+			color TEXT NOT NULL DEFAULT 'ice',
 			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 		)
 	`)
@@ -1702,6 +1786,155 @@ func openSourceToolVisibilityHandler(pool *pgxpool.Pool) gin.HandlerFunc {
 		}
 		c.JSON(http.StatusOK, tool)
 	}
+}
+
+func guestbookMessagesHandler(store guestbookMessageStore) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		messages, err := store.List(c.Request.Context())
+		if err != nil {
+			log.Printf("list guestbook messages: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "guestbook messages are temporarily unavailable"})
+			return
+		}
+		c.JSON(http.StatusOK, messages)
+	}
+}
+
+func guestbookMessageCreateHandler(store guestbookMessageStore) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var payload struct {
+			Name  string `json:"name"`
+			Body  string `json:"body"`
+			Color string `json:"color"`
+		}
+		if err := c.ShouldBindJSON(&payload); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid guestbook message"})
+			return
+		}
+		payload.Name = strings.TrimSpace(payload.Name)
+		payload.Body = strings.TrimSpace(payload.Body)
+		payload.Color = strings.TrimSpace(payload.Color)
+		if payload.Name == "" || len([]rune(payload.Name)) > 20 || payload.Body == "" || len([]rune(payload.Body)) > 160 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "name and message are required and must be within the length limits"})
+			return
+		}
+		if !map[string]bool{"ice": true, "mint": true, "lavender": true, "rose": true}[payload.Color] {
+			payload.Color = "ice"
+		}
+
+		message, err := store.Save(c.Request.Context(), guestbookMessage{Name: payload.Name, Body: payload.Body, Color: payload.Color})
+		if err != nil {
+			log.Printf("save guestbook message: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "guestbook message could not be saved"})
+			return
+		}
+
+		go func(saved guestbookMessage) {
+			notifyContext, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+			if err := sendGuestbookEmail(notifyContext, saved); err != nil {
+				log.Printf("send guestbook email notification: %v", err)
+			}
+		}(message)
+
+		c.JSON(http.StatusCreated, message)
+	}
+}
+
+func guestbookMessageDeleteHandler(store guestbookMessageStore) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+		if err != nil || id < 1 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid guestbook message id"})
+			return
+		}
+		if err := store.Delete(c.Request.Context(), id); errors.Is(err, pgx.ErrNoRows) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "guestbook message not found"})
+			return
+		} else if err != nil {
+			log.Printf("delete guestbook message: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "guestbook message could not be deleted"})
+			return
+		}
+		c.Status(http.StatusNoContent)
+	}
+}
+
+func sendGuestbookEmail(ctx context.Context, message guestbookMessage) error {
+	if !envBool("GUESTBOOK_NOTIFICATION_ENABLED", false) || !envBool("GUESTBOOK_NOTIFICATION_EMAIL", false) {
+		return nil
+	}
+	host := strings.TrimSpace(os.Getenv("SMTP_HOST"))
+	port := envOrDefault("SMTP_PORT", "465")
+	username := strings.TrimSpace(os.Getenv("SMTP_USERNAME"))
+	password := strings.TrimSpace(os.Getenv("SMTP_PASSWORD"))
+	recipient := strings.TrimSpace(os.Getenv("NOTIFICATION_TO_EMAIL"))
+	if host == "" || username == "" || password == "" || recipient == "" {
+		return errors.New("SMTP notification is enabled but SMTP configuration is incomplete")
+	}
+
+	address := net.JoinHostPort(host, port)
+	dialer := &net.Dialer{Timeout: 10 * time.Second}
+	var connection net.Conn
+	var err error
+	if port == "465" {
+		connection, err = tls.DialWithDialer(dialer, "tcp", address, &tls.Config{ServerName: host, MinVersion: tls.VersionTLS12})
+	} else {
+		connection, err = dialer.DialContext(ctx, "tcp", address)
+	}
+	if err != nil {
+		return fmt.Errorf("connect SMTP server: %w", err)
+	}
+	defer connection.Close()
+
+	client, err := smtp.NewClient(connection, host)
+	if err != nil {
+		return fmt.Errorf("create SMTP client: %w", err)
+	}
+	defer client.Close()
+	if port != "465" {
+		if ok, _ := client.Extension("STARTTLS"); !ok {
+			return errors.New("SMTP server does not support STARTTLS")
+		}
+		if err := client.StartTLS(&tls.Config{ServerName: host, MinVersion: tls.VersionTLS12}); err != nil {
+			return fmt.Errorf("start SMTP TLS: %w", err)
+		}
+	}
+	if err := client.Auth(smtp.PlainAuth("", username, password, host)); err != nil {
+		return fmt.Errorf("authenticate SMTP client: %w", err)
+	}
+	if err := client.Mail(username); err != nil {
+		return fmt.Errorf("set SMTP sender: %w", err)
+	}
+	if err := client.Rcpt(recipient); err != nil {
+		return fmt.Errorf("set SMTP recipient: %w", err)
+	}
+	writer, err := client.Data()
+	if err != nil {
+		return fmt.Errorf("open SMTP message: %w", err)
+	}
+	subject := mime.QEncoding.Encode("UTF-8", "[NextAlex] 收到新的留言")
+	content := fmt.Sprintf("From: %s\r\nTo: %s\r\nSubject: %s\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\n访客：%s\r\n时间：%s\r\n留言：\r\n%s\r\n", username, recipient, subject, message.Name, message.CreatedAt.Local().Format("2006-01-02 15:04:05"), message.Body)
+	if _, err := io.WriteString(writer, content); err != nil {
+		_ = writer.Close()
+		return fmt.Errorf("write SMTP message: %w", err)
+	}
+	if err := writer.Close(); err != nil {
+		return fmt.Errorf("send SMTP message: %w", err)
+	}
+	return client.Quit()
+}
+
+func envBool(key string, fallback bool) bool {
+	value, ok := os.LookupEnv(key)
+	if !ok {
+		return fallback
+	}
+	parsed, err := strconv.ParseBool(strings.TrimSpace(value))
+	if err != nil {
+		return fallback
+	}
+	return parsed
 }
 
 func fetchGitHubRepositoryMetadata(ctx context.Context, client *http.Client, rawURL string) (string, string, string, error) {

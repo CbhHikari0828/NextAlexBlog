@@ -90,3 +90,14 @@ CREATE TABLE IF NOT EXISTS notes (
 
 CREATE INDEX IF NOT EXISTS notes_note_date_idx
     ON notes (note_date DESC, id DESC);
+
+CREATE TABLE IF NOT EXISTS guestbook_messages (
+    id BIGSERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    body TEXT NOT NULL,
+    color TEXT NOT NULL DEFAULT 'ice',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS guestbook_messages_created_at_idx
+    ON guestbook_messages (created_at DESC, id DESC);
