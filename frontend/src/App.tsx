@@ -735,38 +735,62 @@ function shouldUseLightCursor(target: Element | null) {
   return false;
 }
 
-function GlobalCursor() {
+function GlobalCursor({ view }: { view: View }) {
+  const layerRef = useRef<HTMLDivElement>(null);
   const cursorRef = useRef<HTMLSpanElement>(null);
+  const trailRefs = useRef<HTMLSpanElement[]>([]);
 
   useEffect(() => {
+    const layer = layerRef.current;
     const cursor = cursorRef.current;
-    if (!cursor) return;
+    const trail = trailRefs.current.filter(Boolean);
+    if (!layer || !cursor) return;
     const finePointer = window.matchMedia("(hover: hover) and (pointer: fine)");
     if (!finePointer.matches) return;
+    const trailEnabled = view !== "home" && !prefersReducedMotion();
+    const targets = trailEnabled ? [cursor, ...trail] : [cursor];
 
-    gsap.set(cursor, { xPercent: -50, yPercent: -50, autoAlpha: 0, scale: 0.72 });
-    const cursorX = gsap.quickTo(cursor, "x", { duration: 0.24, ease: "power3.out" });
-    const cursorY = gsap.quickTo(cursor, "y", { duration: 0.24, ease: "power3.out" });
+    gsap.set(targets, { xPercent: -50, yPercent: -50, autoAlpha: 0, scale: 0.72 });
+    if (!trailEnabled) gsap.set(trail, { autoAlpha: 0 });
+
+    let lastPoint: { x: number; y: number } | null = null;
+    const movers = targets.map((target, index) => ({
+      xTo: gsap.quickTo(target, "x", { duration: trailEnabled ? 0.1 + index * 0.045 : 0.24, ease: "power3.out" }),
+      yTo: gsap.quickTo(target, "y", { duration: trailEnabled ? 0.1 + index * 0.045 : 0.24, ease: "power3.out" }),
+      rotationTo: gsap.quickTo(target, "rotation", { duration: 0.18 + index * 0.025, ease: "power2.out" }),
+    }));
 
     const updateCursorContext = (event: PointerEvent) => {
       const target = document.elementFromPoint(event.clientX, event.clientY);
       const interactive = target?.closest("a, button, label, summary, [role='button'], [role='tab'], input, textarea, select");
       const textInput = target?.closest("input, textarea, select, [contenteditable='true']");
-      cursor.classList.toggle("is-light", shouldUseLightCursor(target));
+      const light = shouldUseLightCursor(target);
+      layer.classList.toggle("is-light", light);
+      layer.classList.toggle("is-hovering", Boolean(interactive && !textInput));
+      layer.classList.toggle("is-text", Boolean(textInput));
+      cursor.classList.toggle("is-light", light);
       cursor.classList.toggle("is-hovering", Boolean(interactive && !textInput));
       cursor.classList.toggle("is-text", Boolean(textInput));
     };
 
-    const showCursor = () => gsap.to(cursor, { autoAlpha: 1, scale: 1, duration: 0.18, ease: "power2.out", overwrite: "auto" });
-    const hideCursor = () => gsap.to(cursor, { autoAlpha: 0, scale: 0.72, duration: 0.18, ease: "power2.out", overwrite: "auto" });
+    const showCursor = () => {
+      gsap.to(cursor, { autoAlpha: 1, scale: 1, duration: 0.16, ease: "power2.out", overwrite: "auto" });
+      if (trailEnabled) gsap.to(trail, { autoAlpha: (index) => Math.max(0.28, 0.82 - index * 0.04), scale: 1, duration: 0.22, ease: "power2.out", stagger: 0.018, overwrite: "auto" });
+    };
+    const hideCursor = () => gsap.to(targets, { autoAlpha: 0, scale: 0.72, duration: 0.18, ease: "power2.out", stagger: 0.012, overwrite: "auto" });
     const moveCursor = (event: PointerEvent) => {
-      cursorX(event.clientX);
-      cursorY(event.clientY);
+      const angle = lastPoint ? Math.atan2(event.clientY - lastPoint.y, event.clientX - lastPoint.x) * 180 / Math.PI : 0;
+      lastPoint = { x: event.clientX, y: event.clientY };
+      movers.forEach((move) => {
+        move.xTo(event.clientX);
+        move.yTo(event.clientY);
+        if (trailEnabled) move.rotationTo(angle);
+      });
       showCursor();
       updateCursorContext(event);
     };
-    const pressCursor = () => cursor.classList.add("is-pressing");
-    const releaseCursor = () => cursor.classList.remove("is-pressing");
+    const pressCursor = () => layer.classList.add("is-pressing");
+    const releaseCursor = () => layer.classList.remove("is-pressing");
 
     window.addEventListener("pointermove", moveCursor, { passive: true });
     window.addEventListener("pointerdown", pressCursor, { passive: true });
@@ -778,11 +802,11 @@ function GlobalCursor() {
       window.removeEventListener("pointerdown", pressCursor);
       window.removeEventListener("pointerup", releaseCursor);
       document.removeEventListener("pointerleave", hideCursor);
-      gsap.killTweensOf(cursor);
+      gsap.killTweensOf([cursor, ...trail]);
     };
-  }, []);
+  }, [view]);
 
-  return <span className="global-cursor" aria-hidden="true" ref={cursorRef} />;
+  return <div className={`global-cursor-layer ${view === "home" ? "is-home" : "is-trail"}`} aria-hidden="true" ref={layerRef}><span className="global-cursor" ref={cursorRef} />{Array.from({ length: 14 }).map((_, index) => <span className="global-cursor-trail" key={index} ref={(element) => { if (element) trailRefs.current[index] = element; }} style={{ "--trail-index": index } as React.CSSProperties} />)}</div>;
 }
 
 function PublicApp() {
@@ -1114,7 +1138,7 @@ function PublicApp() {
 
   return (
     <main className={`app-shell${view === "home" ? " home-shell" : ""}${view === "articles" ? " articles-shell" : ""}${view === "notes" ? " notes-shell" : ""}${view === "gallery" ? " gallery-shell" : ""}${view === "studio" ? " studio-shell" : ""}${view === "entertainment" ? " entertainment-shell" : ""}${view === "guestbook" ? " guestbook-shell" : ""}`}>
-      <GlobalCursor />
+      <GlobalCursor view={view} />
       {(copyNoticeVisible || developerToolsOpen) && <div className="developer-tools-notice" role="status">{copyNoticeVisible ? "复制已完成，转载请标明出处" : "开发者模式已打开，请遵循 GPL 协议"}</div>}
       <header className="site-header">
         <button className="brand" onClick={() => navigate("home")} aria-label="返回首页">

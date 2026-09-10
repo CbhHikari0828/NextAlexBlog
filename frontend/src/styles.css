@@ -6,15 +6,29 @@ body { margin: 0; min-width: 320px; overflow-y: clip; }
 button, input, textarea { font: inherit; }
 button { cursor: pointer; }
 button, a { -webkit-tap-highlight-color: transparent; }
-.global-cursor { display: none; }
+.global-cursor-layer { display: none; }
 @media (hover: hover) and (pointer: fine) {
   .home-shell, .home-shell a, .home-shell button, .home-shell label, .home-shell summary, .home-shell [role="button"], .home-shell [role="tab"] { cursor: none; }
   .home-shell input, .home-shell textarea, .home-shell select, .home-shell [contenteditable="true"] { cursor: text; }
-  .global-cursor { position: fixed; z-index: 90; top: 0; left: 0; display: block; width: 22px; height: 22px; border-radius: 999px; background-color: #1677ff; box-shadow: 0 10px 24px rgba(22, 119, 255, .24); pointer-events: none; transition: width .18s ease, height .18s ease, border-radius .18s ease, background-color .16s ease, box-shadow .18s ease; will-change: transform, opacity, width, height; }
-  .global-cursor.is-light { background-color: #ffffff !important; box-shadow: 0 10px 24px rgba(255, 255, 255, .2); }
-  .global-cursor.is-hovering { width: 28px; height: 28px; }
-  .global-cursor.is-pressing { width: 18px; height: 18px; }
-  .global-cursor.is-text { width: 6px; height: 24px; border-radius: 999px; opacity: .5; }
+  .global-cursor-layer { --cursor-color: #1677ff; --cursor-shadow: rgba(22, 119, 255, .24); --trail-fill: rgba(22, 119, 255, .72); --trail-core: rgba(101, 217, 255, .9); position: fixed; z-index: 90; inset: 0; display: block; overflow: hidden; pointer-events: none; contain: layout paint style; }
+  .global-cursor-layer.is-light { --cursor-color: #ffffff; --cursor-shadow: rgba(255, 255, 255, .22); --trail-fill: rgba(255, 255, 255, .72); --trail-core: rgba(255, 255, 255, .95); }
+  .global-cursor, .global-cursor-trail { position: fixed; top: 0; left: 0; display: block; border-radius: 999px; pointer-events: none; will-change: transform, opacity; }
+  .global-cursor { width: 22px; height: 22px; background-color: var(--cursor-color); box-shadow: 0 10px 24px var(--cursor-shadow); transition: width .18s ease, height .18s ease, border-radius .18s ease, background-color .16s ease, box-shadow .18s ease; }
+  .global-cursor-trail { width: 12px; height: 12px; border-radius: 2px; background: linear-gradient(135deg, var(--trail-core), var(--trail-fill)); box-shadow: 0 8px 18px rgba(22, 119, 255, .16); opacity: 0; transform: translate3d(-50vw, -50vh, 0); }
+  .global-cursor-layer.is-home .global-cursor-trail { display: none; }
+  .global-cursor-layer.is-trail .global-cursor { display: none; }
+  .global-cursor-layer.is-trail .global-cursor-trail:nth-child(2) { width: 15px; height: 15px; opacity: .82; }
+  .global-cursor-layer.is-trail .global-cursor-trail:nth-child(3) { width: 14px; height: 14px; opacity: .76; }
+  .global-cursor-layer.is-trail .global-cursor-trail:nth-child(4) { width: 13px; height: 13px; opacity: .68; }
+  .global-cursor-layer.is-trail .global-cursor-trail:nth-child(5) { width: 12px; height: 12px; opacity: .62; }
+  .global-cursor-layer.is-trail .global-cursor-trail:nth-child(n+6) { width: 10px; height: 10px; opacity: .5; }
+  .global-cursor-layer.is-trail .global-cursor-trail:nth-child(n+10) { width: 8px; height: 8px; opacity: .38; }
+  .global-cursor-layer.is-hovering .global-cursor { width: 28px; height: 28px; }
+  .global-cursor-layer.is-trail.is-hovering .global-cursor-trail:nth-child(-n+5) { transform-origin: center; }
+  .global-cursor-layer.is-pressing .global-cursor { width: 18px; height: 18px; }
+  .global-cursor-layer.is-trail.is-pressing .global-cursor-trail { opacity: .86; }
+  .global-cursor-layer.is-text .global-cursor { width: 6px; height: 24px; border-radius: 999px; opacity: .5; }
+  .global-cursor-layer.is-text .global-cursor-trail { opacity: 0 !important; }
 }
 .developer-tools-notice { position: fixed; z-index: 30; top: 0; right: 0; left: 0; padding: 9px 24px; color: #3f3513; background: #f3cd57; box-shadow: 0 2px 9px rgba(67, 55, 17, .18); font-size: .78rem; font-weight: 700; letter-spacing: 0; line-height: 1.35; text-align: center; }
 .site-loading-screen { position: fixed; z-index: 100; inset: 0; display: grid; place-items: center; overflow: hidden; background: #f3f8ff; }
