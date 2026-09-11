@@ -335,11 +335,12 @@ button, a { -webkit-tap-highlight-color: transparent; }
 .article-read-action i { color: #4638ff; font-size: 1.22rem; font-style: normal; line-height: 1; transition: transform .18s ease; }
 .article-feed-item:hover h2 { color: #4638ff; }
 .article-feed-item:hover .article-read-action i { transform: translateX(4px); }
-.article-pagination { display: flex; align-items: center; gap: 8px; min-height: 38px; margin-top: auto; }
-.article-pagination button { display: grid; width: 34px; height: 34px; place-items: center; padding: 0; border: 1px solid #d9dfe3; color: #27323a; background: #ffffff; font-size: .8rem; font-weight: 700; line-height: 1; }
-.article-pagination button:hover:not(:disabled), .article-pagination-page.active { border-color: #d34a4a; color: #ffffff; background: #d34a4a; }
+.article-pagination { display: inline-flex; align-items: center; gap: 14px; align-self: flex-start; min-height: 34px; margin-top: auto; padding: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; }
+.article-pagination button { display: grid; width: auto; min-width: 22px; height: 30px; place-items: center; padding: 0; border: 0; border-radius: 0; color: #607489; background: transparent; box-shadow: none; font-size: .86rem; font-weight: 800; line-height: 1; transition: color .18s ease, transform .18s ease; }
+.article-pagination button:hover:not(:disabled) { color: #1677ff; background: transparent; transform: translateY(-1px); }
+.article-pagination-page.active { color: #1677ff; background: transparent; box-shadow: none; }
 .article-pagination button:disabled { cursor: default; opacity: .34; }
-.article-pagination button:focus-visible { position: relative; z-index: 1; outline: 2px solid #4638ff; outline-offset: 2px; }
+.article-pagination button:focus-visible { position: relative; z-index: 1; outline: 2px solid rgba(22, 119, 255, .42); outline-offset: 2px; }
 .article-aside { min-width: 0; padding-top: 1px; }
 .article-category-panel { margin-bottom: 77px; }
 .article-category-tags { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 38px; }
