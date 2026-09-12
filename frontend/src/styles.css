@@ -94,7 +94,8 @@ button, a { -webkit-tap-highlight-color: transparent; }
 .gallery-shell .site-footer { margin-top: auto; background: #101619; }
 .studio-shell { width: 100%; min-height: 100vh; background: #ffffff; }
 .studio-shell .studio-layout { width: min(100% - 128px, 1408px); margin-right: auto; margin-left: auto; }
-.studio-shell .site-footer { margin-top: auto; background: #ffffff; }
+.studio-shell .page-stage-studio { flex: 1 0 auto; }
+.studio-shell .site-footer { margin-top: auto; background: #101619; }
 .entertainment-shell { width: 100%; min-height: 100vh; background: #ffffff; }
 .entertainment-shell .steam-page { width: min(100% - 128px, 1408px); margin-right: auto; margin-left: auto; }
 .entertainment-shell .site-footer { margin-top: auto; }
@@ -815,11 +816,6 @@ button, a { -webkit-tap-highlight-color: transparent; }
 .site-footer { position: relative; z-index: 1; display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: clamp(18px, 3vw, 56px); width: 100%; min-height: 76px; flex: 0 0 auto; margin-top: auto; padding: 28px clamp(32px, 6vw, 120px); color: rgba(225,235,239,.66); background: var(--theme-footer); font-size: .7rem; }
 .home-shell .site-footer { margin-top: auto; background: #101619; }
 .notes-footer { grid-template-columns: 1fr auto; min-height: 88px; margin-top: auto; padding: 0 clamp(32px, 4.55vw, 70px); border-top: 1px solid #e2e4e5; color: #73797d; background: #ffffff; font-size: .84rem; }
-.studio-footer { grid-template-columns: 1fr auto; min-height: 72px; padding: 0 max(32px, calc((100vw - 1408px) / 2)); border-top: 0; color: #4d4d4d; background: #ffffff; font-size: .82rem; }
-.studio-footer-links { display: flex; align-items: center; gap: 21px; }
-.studio-footer-links a { display: inline-flex; align-items: center; color: #111111; text-decoration: none; }
-.studio-footer-links a:hover { color: #555555; }
-.studio-footer-links i { width: 1px; height: 20px; background: #e1e1e1; }
 .footer-primary, .footer-meta, .footer-compliance { display: flex; align-items: center; gap: 12px; }
 .footer-primary strong { color: var(--theme-on-image); font-family: Inter, ui-sans-serif, system-ui, sans-serif; font-size: 1rem; font-style: italic; font-weight: 800; }
 .footer-meta, .footer-compliance { color: rgba(225,235,239,.5); }

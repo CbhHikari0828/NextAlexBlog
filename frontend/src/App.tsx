@@ -1192,8 +1192,8 @@ function PublicApp() {
       {selectedCreation && <CreationDrawer creation={selectedCreation} close={() => setSelectedCreation((current) => current === selectedCreation ? null : current)} key={selectedCreation.title} />}
       {selectedNote && <NoteDialog note={selectedNote} close={() => setSelectedNote((current) => current === selectedNote ? null : current)} key={selectedNote.title} />}
 
-      <footer className={`site-footer${view === "notes" ? " notes-footer" : ""}${view === "studio" ? " studio-footer" : ""}`}>
-        {view === "notes" ? <><span>© {new Date().getFullYear()} Alex / Works. All rights reserved.</span><span>React · Gin · PostgreSQL</span></> : view === "studio" ? <><span>© {new Date().getFullYear()} Alex / Works</span><div className="studio-footer-links"><a href="https://github.com/CbhHikari0828/NextAlexBlog" target="_blank" rel="noreferrer" aria-label="GitHub"><GitBranch size={18} strokeWidth={2.1} /></a><i aria-hidden="true" /><a href="#rss">RSS</a></div></> : <><div className="footer-primary"><strong>NextAlex</strong><span>© {new Date().getFullYear()} NextAlex. All rights reserved.</span></div><div className="footer-meta"><span>Version 0.1.0</span><span>React · Gin · PostgreSQL</span></div><div className="footer-compliance"><span>ICP备案信息待配置</span><span>公安网备信息待配置</span></div></>}
+      <footer className={`site-footer${view === "notes" ? " notes-footer" : ""}`}>
+        {view === "notes" ? <><span>© {new Date().getFullYear()} Alex / Works. All rights reserved.</span><span>React · Gin · PostgreSQL</span></> : <><div className="footer-primary"><strong>NextAlex</strong><span>© {new Date().getFullYear()} NextAlex. All rights reserved.</span></div><div className="footer-meta"><span>Version 0.1.0</span><span>React · Gin · PostgreSQL</span></div><div className="footer-compliance"><span>ICP备案信息待配置</span><span>公安网备信息待配置</span></div></>}
       </footer>
     </main>
   );
