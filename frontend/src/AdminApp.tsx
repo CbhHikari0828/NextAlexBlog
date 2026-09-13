@@ -24,6 +24,7 @@ type EditorMode = "write" | "preview";
 type MarkdownDraft = {
   title: string;
   category: string;
+  series: string;
   tags: string;
   summary: string;
   date: string;
@@ -37,6 +38,7 @@ type MarkdownEditorConfig = {
   showTags: boolean;
   showSummary: boolean;
   showDate: boolean;
+  showSeries: boolean;
 };
 
 type SimpleField = {
@@ -116,6 +118,7 @@ const articleEditorConfig: MarkdownEditorConfig = {
   showTags: true,
   showSummary: true,
   showDate: false,
+  showSeries: true,
 };
 
 const noteEditorConfig: MarkdownEditorConfig = {
@@ -124,6 +127,7 @@ const noteEditorConfig: MarkdownEditorConfig = {
   showTags: false,
   showSummary: false,
   showDate: true,
+  showSeries: false,
 };
 
 const galleryPublisherConfig: SimplePublisherConfig = {
@@ -141,6 +145,7 @@ const galleryPublisherConfig: SimplePublisherConfig = {
 const emptyMarkdownDraft: MarkdownDraft = {
   title: "",
   category: "Java 并发编程",
+  series: "JUC 基础",
   tags: "",
   summary: "",
   date: new Date().toISOString().slice(0, 10),
@@ -189,7 +194,8 @@ function parseMarkdownImport(source: string, filename: string, current: Markdown
   return {
     ...current,
     title,
-    category: metadata.category || metadata.series || current.category,
+    category: metadata.category || current.category,
+    series: metadata.series || current.series,
     tags: Array.isArray(tags) ? tags.join(", ") : tags,
     summary: metadata.summary || metadata.description || current.summary,
     date,
@@ -309,6 +315,7 @@ function MarkdownEditor({ config, back }: { config: MarkdownEditorConfig; back: 
       <div className="admin-article-meta">
         <label>标题<input value={draft.title} onChange={(event) => updateDraft("title", event.target.value)} required /></label>
         <label>分类<select value={draft.category} onChange={(event) => updateDraft("category", event.target.value)}><option>Java 并发编程</option><option>JUC 基础</option><option>异步工具箱</option><option>后端实践</option><option>系统设计</option></select></label>
+        {config.showSeries && <label>专栏<input value={draft.series} onChange={(event) => updateDraft("series", event.target.value)} placeholder="例如：算法专栏" /></label>}
         {config.showDate ? <label>日期<input type="date" value={draft.date} onChange={(event) => updateDraft("date", event.target.value)} required /></label> : <label>标签<input value={draft.tags} onChange={(event) => updateDraft("tags", event.target.value)} /></label>}
       </div>
       {config.showSummary && <label className="admin-summary-field">摘要<textarea value={draft.summary} onChange={(event) => updateDraft("summary", event.target.value)} rows={3} /></label>}

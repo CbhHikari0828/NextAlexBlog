@@ -610,8 +610,97 @@ const notes: Note[] = [
   { date: "07.29", title: "《置身事内》阅读摘要", body: "整理地方经济运行机制及其与具体决策之间的关系。", content: ["地方经济运行并不只是抽象政策的执行结果，也受到土地、融资和招商等具体工具的共同影响。", "阅读时重点关注了政府、企业和金融机构之间的协作关系：不同阶段的目标不同，资源配置的方式也会随之变化。", "这类分析框架可以帮助理解现实项目中的约束条件，而不是只从单一指标判断决策。"] },
 ];
 
-const categories = ["全部文章", "Java 并发编程", "JUC 基础", "异步工具箱", "后端实践", "系统设计"];
+const allArticlesLabel = "全部文章";
+const articleCategories = Array.from(new Set(articles.map((article) => article.category)));
+const articleSeries = Array.from(new Set(articles.map((article) => article.series)));
+const articleSeriesByCategory = articleCategories.reduce<Record<string, string[]>>((result, category) => {
+  result[category] = Array.from(new Set(articles.filter((article) => article.category === category).map((article) => article.series)));
+  return result;
+}, {});
+const categories = [allArticlesLabel, ...articleCategories];
 const littlePlanetReadyEventName = "home-little-planet-ready";
+
+type PublicRoute = {
+  view: View;
+  category: string;
+  series: string;
+  page: number;
+};
+
+function articleRouteSlug(value: string) {
+  return value.trim().toLocaleLowerCase()
+    .replace(/[\s_]+/g, "-")
+    .replace(/[^\p{L}\p{N}\u4e00-\u9fff-]+/gu, "")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+}
+
+function decodeRoutePart(value: string) {
+  try {
+    return decodeURIComponent(value).replace(/\+/g, " ").trim();
+  } catch {
+    return value.trim();
+  }
+}
+
+function resolveArticleRouteValue(rawValue: string | null | undefined, options: string[]) {
+  if (!rawValue) return "";
+  const value = decodeRoutePart(rawValue);
+  const slug = articleRouteSlug(value);
+  return options.find((option) => option === value || articleRouteSlug(option) === slug) || "";
+}
+
+function viewFromPath(pathname: string): View {
+  const segment = pathname.split("/").filter(Boolean)[0] || "";
+  if (segment === "articles" || segment === "notes" || segment === "gallery" || segment === "studio" || segment === "entertainment" || segment === "guestbook") {
+    return segment;
+  }
+  return "home";
+}
+
+function buildPublicPath(view: View, category = allArticlesLabel, series = "", page = 1) {
+  const pathname = view === "home" ? "/" : `/${view}`;
+  if (view !== "articles") return pathname;
+
+  const params = new URLSearchParams();
+  if (category !== allArticlesLabel) params.set("category", articleRouteSlug(category));
+  if (series) params.set("series", articleRouteSlug(series));
+  if (page > 1) params.set("page", String(page));
+  const query = params.toString();
+  return query ? `${pathname}?${query}` : pathname;
+}
+
+function readPublicRoute(): PublicRoute {
+  const pathname = window.location.pathname.replace(/\/+$/, "") || "/";
+  const view = viewFromPath(pathname);
+  if (view !== "articles") return { view, category: allArticlesLabel, series: "", page: 1 };
+
+  const segments = pathname.split("/").filter(Boolean);
+  const params = new URLSearchParams(window.location.search);
+  const category = resolveArticleRouteValue(params.get("category") || segments[1], categories) || allArticlesLabel;
+  const seriesOptions = category === allArticlesLabel ? articleSeries : (articleSeriesByCategory[category] || []);
+  const series = resolveArticleRouteValue(params.get("series") || segments[2], seriesOptions);
+
+  if (!params.get("category") && !segments[1] && series) {
+    const matchingCategories = articleCategories.filter((item) => articleSeriesByCategory[item]?.includes(series));
+    if (matchingCategories.length === 1) {
+      return readPublicRouteFromValues(view, matchingCategories[0], series, params.get("page"));
+    }
+  }
+
+  return readPublicRouteFromValues(view, category, series, params.get("page"));
+}
+
+function readPublicRouteFromValues(view: View, category: string, series: string, rawPage: string | null) {
+  const parsedPage = Number.parseInt(rawPage || "1", 10);
+  const page = Number.isFinite(parsedPage) ? Math.max(1, parsedPage) : 1;
+  const matchingArticles = articles.filter((article) => (
+    (category === allArticlesLabel || article.category === category)
+    && (!series || article.series === series)
+  ));
+  const pageCount = Math.max(1, Math.ceil(matchingArticles.length / articlesPerPage));
+  return { view, category, series, page: Math.min(page, pageCount) };
+}
 
 function App() {
   const [showLoader, setShowLoader] = useState(true);
@@ -810,7 +899,8 @@ function GlobalCursor({ view }: { view: View }) {
 }
 
 function PublicApp() {
-  const [view, setView] = useState<View>("home");
+  const initialRoute = readPublicRoute();
+  const [view, setView] = useState<View>(() => initialRoute.view);
   const [apiState, setApiState] = useState<ApiState>("checking");
   const contributionYear = new Date().getFullYear();
   const [githubContributions, setGithubContributions] = useState<GitHubContributions | null>(null);
@@ -825,8 +915,9 @@ function PublicApp() {
   const [openSourceTools, setOpenSourceTools] = useState<OpenSourceTool[]>(mockOpenSourceTools);
   const [developerToolsOpen, setDeveloperToolsOpen] = useState(false);
   const [copyNoticeVisible, setCopyNoticeVisible] = useState(false);
-  const [activeCategory, setActiveCategory] = useState("全部文章");
-  const [articlePage, setArticlePage] = useState(1);
+  const [activeCategory, setActiveCategory] = useState(() => initialRoute.category);
+  const [activeSeries, setActiveSeries] = useState(() => initialRoute.series);
+  const [articlePage, setArticlePage] = useState(() => initialRoute.page);
   const [publishedCreations, setPublishedCreations] = useState<Creation[]>([]);
   const [publishedNotes, setPublishedNotes] = useState<Note[]>(notes);
   const [selectedArticle, setSelectedArticle] = useState<Article | null>(null);
@@ -848,6 +939,28 @@ function PublicApp() {
       return [];
     }
   });
+
+  useEffect(() => {
+    const syncRoute = () => {
+      const route = readPublicRoute();
+      setView(route.view);
+      setActiveCategory(route.category);
+      setActiveSeries(route.series);
+      setArticlePage(route.page);
+      setSelectedArticle(null);
+      setSelectedCreation(null);
+      setSelectedNote(null);
+      setViewSequence((sequence) => sequence + 1);
+      window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+    };
+
+    const route = readPublicRoute();
+    const canonicalPath = buildPublicPath(route.view, route.category, route.series, route.page);
+    const currentPath = window.location.pathname + window.location.search;
+    if (currentPath !== canonicalPath) window.history.replaceState({}, "", canonicalPath);
+    window.addEventListener("popstate", syncRoute);
+    return () => window.removeEventListener("popstate", syncRoute);
+  }, []);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -1058,19 +1171,42 @@ function PublicApp() {
   }, []);
 
   const filteredArticles = useMemo(
-    () => activeCategory === "全部文章" ? articles : articles.filter((article) => article.category === activeCategory || article.series === activeCategory),
-    [activeCategory],
+    () => articles.filter((article) => (activeCategory === allArticlesLabel || article.category === activeCategory) && (!activeSeries || article.series === activeSeries)),
+    [activeCategory, activeSeries],
   );
-  const articlePageCount = Math.max(1, Math.ceil(filteredArticles.length / articlesPerPage));
-  const visibleArticlePage = Math.min(articlePage, articlePageCount);
-  const paginatedArticles = useMemo(
-    () => filteredArticles.slice((visibleArticlePage - 1) * articlesPerPage, visibleArticlePage * articlesPerPage),
-    [filteredArticles, visibleArticlePage],
-  );
+ const articlePageCount = Math.max(1, Math.ceil(filteredArticles.length / articlesPerPage));
+ const visibleArticlePage = Math.min(articlePage, articlePageCount);
+ const paginatedArticles = useMemo(
+   () => filteredArticles.slice((visibleArticlePage - 1) * articlesPerPage, visibleArticlePage * articlesPerPage),
+   [filteredArticles, visibleArticlePage],
+ );
+  const availableArticleSeries = activeCategory === allArticlesLabel ? articleSeries : (articleSeriesByCategory[activeCategory] || []);
 
-  function selectArticleCategory(category: string) {
-    setActiveCategory(category);
+  function updateArticleUrl(category: string, series: string, page: number, replace = false) {
+    const targetPath = buildPublicPath("articles", category, series, page);
+    const currentPath = window.location.pathname + window.location.search;
+    if (targetPath === currentPath) return;
+    const update = replace ? window.history.replaceState : window.history.pushState;
+    update.call(window.history, {}, "", targetPath);
+  }
+
+ function selectArticleCategory(category: string) {
+   setActiveCategory(category);
+    setActiveSeries("");
+   setArticlePage(1);
+    updateArticleUrl(category, "", 1);
+ }
+
+  function selectArticleSeries(series: string) {
+    setActiveSeries(series);
     setArticlePage(1);
+    updateArticleUrl(activeCategory, series, 1);
+  }
+
+  function selectArticlePage(page: number) {
+    const nextPage = Math.min(Math.max(1, page), articlePageCount);
+    setArticlePage(nextPage);
+    updateArticleUrl(activeCategory, activeSeries, nextPage, true);
   }
 
   function openArticle(article: Article) {
@@ -1091,18 +1227,25 @@ function PublicApp() {
     setSelectedNote(note);
   }
 
-  function navigate(nextView: View) {
-    if (nextView === view && !selectedArticle && !selectedCreation && !selectedNote) return;
+ function navigate(nextView: View) {
+   if (nextView === view && !selectedArticle && !selectedCreation && !selectedNote) return;
 
-    runPageTransition(() => {
-      setView(nextView);
-      setSelectedArticle(null);
-      setSelectedCreation(null);
-      setSelectedNote(null);
-      setViewSequence((sequence) => sequence + 1);
-      window.scrollTo({ top: 0, behavior: "auto" });
-    });
-  }
+    const nextPath = buildPublicPath(nextView);
+    const currentPath = window.location.pathname + window.location.search;
+    if (nextPath !== currentPath) window.history.pushState({}, "", nextPath);
+
+   runPageTransition(() => {
+     setView(nextView);
+     setSelectedArticle(null);
+     setSelectedCreation(null);
+     setSelectedNote(null);
+      setActiveCategory(allArticlesLabel);
+      setActiveSeries("");
+      setArticlePage(1);
+     setViewSequence((sequence) => sequence + 1);
+     window.scrollTo({ top: 0, behavior: "auto" });
+   });
+ }
 
   async function submitMessage(event: FormEvent<HTMLFormElement>, color: NoteColor) {
     event.preventDefault();
@@ -1179,7 +1322,7 @@ function PublicApp() {
 
         {view === "home" && <Home navigate={navigate} setSelectedArticle={openArticle} repositories={githubRepositories} repositoryState={repositoryState} />}
         {view === "articles" && (
-          <Articles activeCategory={activeCategory} setActiveCategory={selectArticleCategory} paginatedArticles={paginatedArticles} articlePage={visibleArticlePage} articlePageCount={articlePageCount} setArticlePage={setArticlePage} setSelectedArticle={openArticle} />
+          <Articles activeCategory={activeCategory} activeSeries={activeSeries} availableSeries={availableArticleSeries} setActiveCategory={selectArticleCategory} setActiveSeries={selectArticleSeries} paginatedArticles={paginatedArticles} articlePage={visibleArticlePage} articlePageCount={articlePageCount} setArticlePage={selectArticlePage} setSelectedArticle={openArticle} />
         )}
         {view === "notes" && <Notes notes={publishedNotes} setSelectedNote={openNote} />}
         {view === "gallery" && <Gallery creations={publishedCreations} setSelectedCreation={openCreation} />}
@@ -1577,7 +1720,7 @@ function HomeQuickFolder({ navigate }: { navigate: (view: View) => void }) {
   );
 }
 
-function Articles({ activeCategory, setActiveCategory, paginatedArticles, articlePage, articlePageCount, setArticlePage, setSelectedArticle }: { activeCategory: string; setActiveCategory: (category: string) => void; paginatedArticles: Article[]; articlePage: number; articlePageCount: number; setArticlePage: (page: number) => void; setSelectedArticle: (article: Article) => void }) {
+function Articles({ activeCategory, activeSeries, availableSeries, setActiveCategory, setActiveSeries, paginatedArticles, articlePage, articlePageCount, setArticlePage, setSelectedArticle }: { activeCategory: string; activeSeries: string; availableSeries: string[]; setActiveCategory: (category: string) => void; setActiveSeries: (series: string) => void; paginatedArticles: Article[]; articlePage: number; articlePageCount: number; setArticlePage: (page: number) => void; setSelectedArticle: (article: Article) => void }) {
   const articleRef = useRef<HTMLElement>(null);
 
   useGSAP(() => {
@@ -1598,9 +1741,37 @@ function Articles({ activeCategory, setActiveCategory, paginatedArticles, articl
         once: true,
       },
     });
-  }, { scope: articleRef, dependencies: [activeCategory, articlePage, paginatedArticles.length], revertOnUpdate: true });
+  }, { scope: articleRef, dependencies: [activeCategory, activeSeries, articlePage, paginatedArticles.length], revertOnUpdate: true });
 
-  return <section className="content-band article-index" ref={articleRef}><div className="article-feed"><h1>最新发布</h1><div className="article-list">{paginatedArticles.map((article) => <button className="article-feed-item" key={article.title} onClick={() => setSelectedArticle(article)}><h2>{article.title}</h2><p>{article.excerpt}</p><span className="article-read-action">阅读全文 <i aria-hidden="true">→</i></span></button>)}</div><nav className="article-pagination" aria-label="文章分页"><button className="article-pagination-arrow" type="button" onClick={() => setArticlePage(articlePage - 1)} disabled={articlePage === 1} aria-label="上一页" title="上一页"><ChevronLeft aria-hidden="true" size={17} /></button>{Array.from({ length: articlePageCount }, (_, index) => index + 1).map((page) => <button className={`article-pagination-page${page === articlePage ? " active" : ""}`} type="button" key={page} aria-current={page === articlePage ? "page" : undefined} onClick={() => setArticlePage(page)}>{page}</button>)}<button className="article-pagination-arrow" type="button" onClick={() => setArticlePage(articlePage + 1)} disabled={articlePage === articlePageCount} aria-label="下一页" title="下一页"><ChevronRight aria-hidden="true" size={17} /></button></nav></div><aside className="article-aside"><section className="article-category-panel"><h2>文章分类</h2><div className="article-category-tags" role="tablist" aria-label="文章分类">{categories.map((category) => <button key={category} role="tab" aria-selected={activeCategory === category} className={activeCategory === category ? "filter-active" : ""} onClick={() => setActiveCategory(category)}>{category}</button>)}</div></section><section className="popular-articles"><h2>热门文章</h2><div>{articles.slice(0, 5).map((article) => <button key={article.title} onClick={() => setSelectedArticle(article)}><span aria-hidden="true">→</span>{article.title}</button>)}</div></section></aside></section>;
+  return <section className="content-band article-index" ref={articleRef}>
+    <div className="article-feed">
+      <h1>最新发布</h1>
+      <div className="article-list">
+        {paginatedArticles.map((article) => <button className="article-feed-item" key={article.title} onClick={() => setSelectedArticle(article)}><h2>{article.title}</h2><p>{article.excerpt}</p><span className="article-read-action">阅读全文 <i aria-hidden="true">→</i></span></button>)}
+      </div>
+      <nav className="article-pagination" aria-label="文章分页">
+        <button className="article-pagination-arrow" type="button" onClick={() => setArticlePage(articlePage - 1)} disabled={articlePage === 1} aria-label="上一页" title="上一页"><ChevronLeft aria-hidden="true" size={17} /></button>
+        {Array.from({ length: articlePageCount }, (_, index) => index + 1).map((page) => <button className={`article-pagination-page${page === articlePage ? " active" : ""}`} type="button" key={page} aria-current={page === articlePage ? "page" : undefined} onClick={() => setArticlePage(page)}>{page}</button>)}
+        <button className="article-pagination-arrow" type="button" onClick={() => setArticlePage(articlePage + 1)} disabled={articlePage === articlePageCount} aria-label="下一页" title="下一页"><ChevronRight aria-hidden="true" size={17} /></button>
+      </nav>
+    </div>
+    <aside className="article-aside">
+      <section className="article-category-panel">
+        <h2>文章分类</h2>
+        <div className="article-category-tags" role="tablist" aria-label="文章分类">
+          {categories.map((category) => <button key={category} role="tab" aria-selected={activeCategory === category} className={activeCategory === category ? "filter-active" : ""} onClick={() => setActiveCategory(category)}>{category}</button>)}
+        </div>
+        {availableSeries.length > 0 && <div className="article-series-filter">
+          <div className="article-series-heading"><span>专栏</span>{activeCategory !== allArticlesLabel && <small>{activeCategory}</small>}</div>
+          <div className="article-category-tags article-series-tags" role="tablist" aria-label="文章专栏">
+            <button role="tab" aria-selected={!activeSeries} className={!activeSeries ? "filter-active" : ""} onClick={() => setActiveSeries("")}>全部专栏</button>
+            {availableSeries.map((series) => <button key={series} role="tab" aria-selected={activeSeries === series} className={activeSeries === series ? "filter-active" : ""} onClick={() => setActiveSeries(series)}>{series}</button>)}
+          </div>
+        </div>}
+      </section>
+      <section className="popular-articles"><h2>热门文章</h2><div>{articles.slice(0, 5).map((article) => <button key={article.title} onClick={() => setSelectedArticle(article)}><span aria-hidden="true">→</span>{article.title}</button>)}</div></section>
+    </aside>
+  </section>;
 }
 
 function Notes({ notes, setSelectedNote }: { notes: Note[]; setSelectedNote: (note: Note) => void }) {
