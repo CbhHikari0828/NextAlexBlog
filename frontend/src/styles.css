@@ -347,7 +347,7 @@ button, a { -webkit-tap-highlight-color: transparent; }
 .article-category-tags { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 38px; }
 .article-category-tags button { padding: 9px 13px; border: 0; border-radius: 8px; color: #112b49; background: #cae8f8; font-size: .8rem; font-weight: 700; line-height: 1; }
 .article-category-tags button:hover, .article-category-tags button.filter-active { color: #ffffff; background: #4638ff; }
-.article-series-filter { margin-top: 30px; }
+.article-series-filter { margin: 24px 0 0 14px; }
 .article-series-heading { display: flex; align-items: baseline; gap: 9px; color: #1677ff; font-size: .68rem; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
 .article-series-heading small { overflow: hidden; color: #8194a8; font-size: .7rem; font-weight: 700; letter-spacing: 0; text-overflow: ellipsis; white-space: nowrap; }
 .article-series-tags { margin-top: 14px; }

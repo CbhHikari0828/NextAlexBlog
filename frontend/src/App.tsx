@@ -664,7 +664,7 @@ function buildPublicPath(view: View, category = allArticlesLabel, series = "", p
 
   const params = new URLSearchParams();
   if (category !== allArticlesLabel) params.set("category", articleRouteSlug(category));
-  if (series) params.set("series", articleRouteSlug(series));
+  if (category !== allArticlesLabel && series) params.set("series", articleRouteSlug(series));
   if (page > 1) params.set("page", String(page));
   const query = params.toString();
   return query ? `${pathname}?${query}` : pathname;
@@ -677,29 +677,36 @@ function readPublicRoute(): PublicRoute {
 
   const segments = pathname.split("/").filter(Boolean);
   const params = new URLSearchParams(window.location.search);
-  const category = resolveArticleRouteValue(params.get("category") || segments[1], categories) || allArticlesLabel;
-  const seriesOptions = category === allArticlesLabel ? articleSeries : (articleSeriesByCategory[category] || []);
-  const series = resolveArticleRouteValue(params.get("series") || segments[2], seriesOptions);
+  const rawCategory = params.get("category") || segments[1] || "";
+  const rawSeries = params.get("series") || segments[2] || "";
+  const category = resolveArticleRouteValue(rawCategory, categories) || allArticlesLabel;
 
-  if (!params.get("category") && !segments[1] && series) {
-    const matchingCategories = articleCategories.filter((item) => articleSeriesByCategory[item]?.includes(series));
+  if (category === allArticlesLabel && rawSeries) {
+    const resolvedSeries = resolveArticleRouteValue(rawSeries, articleSeries);
+    const matchingCategories = resolvedSeries
+      ? articleCategories.filter((item) => articleSeriesByCategory[item]?.includes(resolvedSeries))
+      : [];
     if (matchingCategories.length === 1) {
-      return readPublicRouteFromValues(view, matchingCategories[0], series, params.get("page"));
+      return readPublicRouteFromValues(view, matchingCategories[0], resolvedSeries, params.get("page"));
     }
   }
 
+  const series = category === allArticlesLabel
+    ? ""
+    : resolveArticleRouteValue(rawSeries, articleSeriesByCategory[category] || []);
   return readPublicRouteFromValues(view, category, series, params.get("page"));
 }
 
 function readPublicRouteFromValues(view: View, category: string, series: string, rawPage: string | null) {
   const parsedPage = Number.parseInt(rawPage || "1", 10);
   const page = Number.isFinite(parsedPage) ? Math.max(1, parsedPage) : 1;
+  const scopedSeries = category === allArticlesLabel || !articleSeriesByCategory[category]?.includes(series) ? "" : series;
   const matchingArticles = articles.filter((article) => (
     (category === allArticlesLabel || article.category === category)
-    && (!series || article.series === series)
+    && (!scopedSeries || article.series === scopedSeries)
   ));
   const pageCount = Math.max(1, Math.ceil(matchingArticles.length / articlesPerPage));
-  return { view, category, series, page: Math.min(page, pageCount) };
+  return { view, category, series: scopedSeries, page: Math.min(page, pageCount) };
 }
 
 function App() {
@@ -1176,11 +1183,11 @@ function PublicApp() {
   );
  const articlePageCount = Math.max(1, Math.ceil(filteredArticles.length / articlesPerPage));
  const visibleArticlePage = Math.min(articlePage, articlePageCount);
- const paginatedArticles = useMemo(
-   () => filteredArticles.slice((visibleArticlePage - 1) * articlesPerPage, visibleArticlePage * articlesPerPage),
-   [filteredArticles, visibleArticlePage],
- );
-  const availableArticleSeries = activeCategory === allArticlesLabel ? articleSeries : (articleSeriesByCategory[activeCategory] || []);
+  const paginatedArticles = useMemo(
+    () => filteredArticles.slice((visibleArticlePage - 1) * articlesPerPage, visibleArticlePage * articlesPerPage),
+    [filteredArticles, visibleArticlePage],
+  );
+  const availableArticleSeries = activeCategory === allArticlesLabel ? [] : (articleSeriesByCategory[activeCategory] || []);
 
   function updateArticleUrl(category: string, series: string, page: number, replace = false) {
     const targetPath = buildPublicPath("articles", category, series, page);
@@ -1198,9 +1205,11 @@ function PublicApp() {
  }
 
   function selectArticleSeries(series: string) {
-    setActiveSeries(series);
+    if (activeCategory === allArticlesLabel) return;
+    const nextSeries = availableArticleSeries.includes(series) ? series : "";
+    setActiveSeries(nextSeries);
     setArticlePage(1);
-    updateArticleUrl(activeCategory, series, 1);
+    updateArticleUrl(activeCategory, nextSeries, 1);
   }
 
   function selectArticlePage(page: number) {
@@ -1761,8 +1770,8 @@ function Articles({ activeCategory, activeSeries, availableSeries, setActiveCate
         <div className="article-category-tags" role="tablist" aria-label="文章分类">
           {categories.map((category) => <button key={category} role="tab" aria-selected={activeCategory === category} className={activeCategory === category ? "filter-active" : ""} onClick={() => setActiveCategory(category)}>{category}</button>)}
         </div>
-        {availableSeries.length > 0 && <div className="article-series-filter">
-          <div className="article-series-heading"><span>专栏</span>{activeCategory !== allArticlesLabel && <small>{activeCategory}</small>}</div>
+        {activeCategory !== allArticlesLabel && availableSeries.length > 0 && <div className="article-series-filter" aria-label={`${activeCategory}下的专栏`}>
+          <div className="article-series-heading"><span>{activeCategory} / 专栏</span></div>
           <div className="article-category-tags article-series-tags" role="tablist" aria-label="文章专栏">
             <button role="tab" aria-selected={!activeSeries} className={!activeSeries ? "filter-active" : ""} onClick={() => setActiveSeries("")}>全部专栏</button>
             {availableSeries.map((series) => <button key={series} role="tab" aria-selected={activeSeries === series} className={activeSeries === series ? "filter-active" : ""} onClick={() => setActiveSeries(series)}>{series}</button>)}
