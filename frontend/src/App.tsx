@@ -1294,8 +1294,8 @@ function PublicApp() {
       {(copyNoticeVisible || developerToolsOpen) && <div className="developer-tools-notice" role="status">{copyNoticeVisible ? "复制已完成，转载请标明出处" : "开发者模式已打开，请遵循 GPL 协议"}</div>}
       <header className="site-header">
         <button className="brand" onClick={() => navigate("home")} aria-label="返回首页">
-          <span className="brand-mark">A</span>
-          <span>ALEX / WORKS</span>
+          <span className="brand-mark">C</span>
+          <span>CAMERON / WORKS</span>
         </button>
         <nav className="main-nav" role="tablist" aria-label="主导航">
           {publicNavItems.map((item) => {
@@ -1345,7 +1345,7 @@ function PublicApp() {
       {selectedNote && <NoteDialog note={selectedNote} close={() => setSelectedNote((current) => current === selectedNote ? null : current)} key={selectedNote.title} />}
 
       <footer className={`site-footer${view === "notes" ? " notes-footer" : ""}`}>
-        {view === "notes" ? <><span>© {new Date().getFullYear()} Alex / Works. All rights reserved.</span><span>React · Gin · PostgreSQL</span></> : <><div className="footer-primary"><strong>NextAlex</strong><span>© {new Date().getFullYear()} NextAlex. All rights reserved.</span></div><div className="footer-meta"><span>Version 0.1.0</span><span>React · Gin · PostgreSQL</span></div><div className="footer-compliance"><span>ICP备案信息待配置</span><span>公安网备信息待配置</span></div></>}
+        {view === "notes" ? <><span>© {new Date().getFullYear()} Cameron / Works. All rights reserved.</span><span>React · Gin · PostgreSQL</span></> : <><div className="footer-primary"><strong>Cameron</strong><span>© {new Date().getFullYear()} Cameron. All rights reserved.</span></div><div className="footer-meta"><span>Version 0.1.0</span><span>React · Gin · PostgreSQL</span></div><div className="footer-compliance"><span>ICP备案信息待配置</span><span>公安网备信息待配置</span></div></>}
       </footer>
     </main>
   );
@@ -1373,7 +1373,7 @@ function PageStage({ view, children }: { view: View; children: ReactNode }) {
 }
 
 function Home({ navigate, setSelectedArticle, repositories, repositoryState }: { navigate: (view: View) => void; setSelectedArticle: (article: Article) => void; repositories: GitHubRepositories | null; repositoryState: RepositoryState }) {
-  const profileName = "NextAlex";
+  const profileName = "Cameron";
   const [displayedName, setDisplayedName] = useState("");
   const projects = repositories?.repositories ?? [];
   const featuredHomeArticles = articles.slice(0, 5).map((article, index) => ({
@@ -1629,7 +1629,7 @@ function Home({ navigate, setSelectedArticle, repositories, repositoryState }: {
         <div className="home-hero-inner">
           <div className="hero-content">
             <div className="profile-identity">
-              <img className="profile-avatar" src="/avatar.jpg" alt="NextAlex 的头像" />
+              <img className="profile-avatar" src="/avatar.jpg" alt="Cameron 的头像" />
               <div className="profile-copy">
                 <p className="profile-name" aria-label={profileName}>{displayedName}<span className="typing-caret" aria-hidden="true" /></p>
                 <h1>技术开发与 AI 创作</h1>
