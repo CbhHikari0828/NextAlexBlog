@@ -1,0 +1,13 @@
+services:
+  postgres:
+    build:
+      context: ./database
+
+  backend:
+    build:
+      context: ./backend
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.production
