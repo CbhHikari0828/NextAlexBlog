@@ -3,7 +3,7 @@ import type { PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import { useGSAP } from "@gsap/react";
 import { gsap } from "gsap";
 import { ScrollTrigger } from "gsap/ScrollTrigger";
-import { ArrowUpRight, ChevronDown, ChevronLeft, ChevronRight, Code2, Eye, GitBranch, GitFork, Mail, Rss, Send, Star, Users, X } from "lucide-react";
+import { ArrowUpRight, ChevronDown, ChevronLeft, ChevronRight, Code2, Eye, GitBranch, GitFork, Heart, Mail, Rss, Send, Star, Users, X } from "lucide-react";
 import { motion, useMotionValue, useSpring, useTransform } from "motion/react";
 import ReactMarkdown from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
@@ -131,13 +131,17 @@ type ContributionCell = Omit<GitHubContributionDay, "date"> & {
 };
 
 type Article = {
+  id: number;
+  slug: string;
   title: string;
   category: string;
   series: string;
+  tags: string[];
   date: string;
   readTime: string;
   views: number;
-  excerpt: string;
+  likes: number;
+  summary: string;
   content: string;
 };
 
@@ -267,6 +271,19 @@ function formatSteamPlaytime(minutes: number) {
   return `${Math.floor(minutes / 60)} 小时`;
 }
 
+const articleLikeCooldownMs = 30 * 60 * 1000;
+
+function articleLikeStorageKey(articleID: number) {
+  return `nextalex-article-liked-${articleID}`;
+}
+
+function articleLikeCooldownEndsAt(articleID: number) {
+  const likedAt = Number(localStorage.getItem(articleLikeStorageKey(articleID)));
+  if (!Number.isFinite(likedAt) || likedAt <= 0) return 0;
+  const endsAt = likedAt + articleLikeCooldownMs;
+  return endsAt > Date.now() ? endsAt : 0;
+}
+
 const prefersReducedMotion = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 const focusableSelector = "a[href], button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex='-1'])";
 
@@ -343,19 +360,6 @@ function useAnimatedDismiss(onDismiss: () => void, duration: number) {
   return [closing, requestDismiss] as const;
 }
 
-const mockGuestbookComments: GuestbookComment[] = [
-  { name: "林川", body: "JUC 基础系列讲得很清楚，期待线程池这一篇的完整整理。", date: "今天 10:24", color: "ice" },
-  { name: "Mia", body: "图库的视觉统一得很好，首页背景和头像的组合很有辨识度。", date: "昨天 21:08", color: "rose" },
-  { name: "陈默", body: "刚看完 CompletableFuture 的文章，异常处理部分正好解决了我的疑问。", date: "昨天 15:42", color: "mint" },
-  { name: "Yuki", body: "创作中心的项目展示很干净，想看看 Prompt Garden 的后续版本。", date: "08.10", color: "lavender" },
-  { name: "阿北", body: "文章分类很明确，查找 JUC 相关内容非常方便。", date: "08.09", color: "ice" },
-  { name: "Kris", body: "留言墙这个形式不错，内容多起来以后会很有社区感。", date: "08.09", color: "mint" },
-  { name: "苏杭", body: "期待更多工程实践主题，尤其是服务稳定性和并发排查。", date: "08.08", color: "rose" },
-  { name: "Nora", body: "作品的配色和排版很舒服，已收藏。", date: "08.08", color: "lavender" },
-  { name: "程远", body: "希望后面能增加文章目录和代码片段复制功能。", date: "08.07", color: "ice" },
-  { name: "Dawn", body: "从技术文章到 AI 创作，内容方向很完整。", date: "08.06", color: "mint" },
-];
-
 const noteLayouts = [
   { x: "3%", y: "7%", tilt: -3.1, z: 5 },
   { x: "25%", y: "3%", tilt: 2.4, z: 8 },
@@ -383,7 +387,8 @@ function getNoteLayout(index: number) {
 }
 
 /*
-const articles: Article[] = [
+// Historical source retained only as a migration reference. Public rendering reads /api/articles.
+const legacyFrontendArticles = [
   {
     title: "从可见性到有序性：并发编程的第一性原理",
     category: "Java 并发编程",
@@ -502,6 +507,7 @@ return profile.thenCombine(orders, Result::new);
 
 */
 
+/* Historical article source was migrated to PostgreSQL. It is intentionally not rendered by the frontend.
 const articleBodies = {
   concurrency: [
     "## 从共享状态开始",
@@ -591,7 +597,7 @@ const articleBodies = {
   ].join("\n"),
 };
 
-const articles: Article[] = [
+const legacyFrontendArticles = [
   { title: "从可见性到有序性：并发编程的第一性原理", category: "Java 并发编程", series: "JUC 基础", date: "2026.08.08", readTime: "12 min", views: 1284, excerpt: "梳理 happens-before、锁和原子性的关系，说明 Java 线程安全的核心约束。", content: articleBodies.concurrency },
   { title: "一张图读懂 Java 线程池的生命周期", category: "Java 并发编程", series: "JUC 基础", date: "2026.08.01", readTime: "9 min", views: 967, excerpt: "从任务提交到 Worker 退出，记录 ThreadPoolExecutor 最容易被忽略的状态变化。", content: articleBodies.threadPool },
   { title: "用 CompletableFuture 编排一次可靠的异步流程", category: "Java 并发编程", series: "异步工具箱", date: "2026.07.22", readTime: "15 min", views: 742, excerpt: "并行、超时、降级和异常恢复，组合成可以在生产环境里落地的异步代码。", content: articleBodies.completableFuture },
@@ -603,6 +609,7 @@ const articles: Article[] = [
   { title: "幂等控制如何落在接口边界", category: "后端实践", series: "系统设计", date: "2026.05.30", readTime: "9 min", views: 418, excerpt: "从请求标识、状态存储到重复提交，拆解接口幂等的实现要点。", content: articleBodies.distributedLock },
   { title: "异步链路中的异常传播与降级", category: "Java 并发编程", series: "异步工具箱", date: "2026.05.21", readTime: "14 min", views: 574, excerpt: "统一处理异常、超时和兜底结果，避免异步流程在边界处失控。", content: articleBodies.completableFuture },
 ];
+*/
 
 const notes: Note[] = [
   { date: "08.11", title: "并发学习方法", body: "先识别共享状态和状态转换，再选择并发控制方案。", content: ["并发问题通常不是从锁开始，而是从共享状态开始。先明确哪些数据会被多个线程读取或修改，再标出状态变化发生的位置。", "随后根据一致性要求选择控制方式：只需要可见性时使用 volatile；需要复合操作原子性时使用同步机制或原子类；读多写少的场景则优先评估不可变对象和并发集合。", "每次引入同步都应说明它保护的状态以及释放锁后的不变量，这比单纯记忆 API 更可靠。"] },
@@ -611,13 +618,6 @@ const notes: Note[] = [
 ];
 
 const allArticlesLabel = "全部文章";
-const articleCategories = Array.from(new Set(articles.map((article) => article.category)));
-const articleSeries = Array.from(new Set(articles.map((article) => article.series)));
-const articleSeriesByCategory = articleCategories.reduce<Record<string, string[]>>((result, category) => {
-  result[category] = Array.from(new Set(articles.filter((article) => article.category === category).map((article) => article.series)));
-  return result;
-}, {});
-const categories = [allArticlesLabel, ...articleCategories];
 const littlePlanetReadyEventName = "home-little-planet-ready";
 
 type PublicRoute = {
@@ -670,11 +670,26 @@ function buildPublicPath(view: View, category = allArticlesLabel, series = "", p
   return query ? `${pathname}?${query}` : pathname;
 }
 
-function readPublicRoute(): PublicRoute {
+function getArticleTaxonomy(items: Article[]) {
+  const articleCategories = Array.from(new Set(items.map((article) => article.category).filter(Boolean)));
+  const articleSeries = Array.from(new Set(items.map((article) => article.series).filter(Boolean)));
+  const articleSeriesByCategory = articleCategories.reduce<Record<string, string[]>>((result, category) => {
+    result[category] = Array.from(new Set(items.filter((article) => article.category === category).map((article) => article.series).filter(Boolean)));
+    return result;
+  }, {});
+  return { articleCategories, articleSeries, articleSeriesByCategory, categories: [allArticlesLabel, ...articleCategories] };
+}
+
+function formatArticleDate(value: string) {
+  return value.replaceAll("-", ".");
+}
+
+function readPublicRoute(availableArticles: Article[] = []): PublicRoute {
   const pathname = window.location.pathname.replace(/\/+$/, "") || "/";
   const view = viewFromPath(pathname);
   if (view !== "articles") return { view, category: allArticlesLabel, series: "", page: 1 };
 
+  const { articleCategories, articleSeries, articleSeriesByCategory, categories } = getArticleTaxonomy(availableArticles);
   const segments = pathname.split("/").filter(Boolean);
   const params = new URLSearchParams(window.location.search);
   const rawCategory = params.get("category") || segments[1] || "";
@@ -687,21 +702,22 @@ function readPublicRoute(): PublicRoute {
       ? articleCategories.filter((item) => articleSeriesByCategory[item]?.includes(resolvedSeries))
       : [];
     if (matchingCategories.length === 1) {
-      return readPublicRouteFromValues(view, matchingCategories[0], resolvedSeries, params.get("page"));
+      return readPublicRouteFromValues(view, matchingCategories[0], resolvedSeries, params.get("page"), availableArticles);
     }
   }
 
   const series = category === allArticlesLabel
     ? ""
     : resolveArticleRouteValue(rawSeries, articleSeriesByCategory[category] || []);
-  return readPublicRouteFromValues(view, category, series, params.get("page"));
+  return readPublicRouteFromValues(view, category, series, params.get("page"), availableArticles);
 }
 
-function readPublicRouteFromValues(view: View, category: string, series: string, rawPage: string | null) {
+function readPublicRouteFromValues(view: View, category: string, series: string, rawPage: string | null, availableArticles: Article[]) {
+  const { articleSeriesByCategory } = getArticleTaxonomy(availableArticles);
   const parsedPage = Number.parseInt(rawPage || "1", 10);
   const page = Number.isFinite(parsedPage) ? Math.max(1, parsedPage) : 1;
   const scopedSeries = category === allArticlesLabel || !articleSeriesByCategory[category]?.includes(series) ? "" : series;
-  const matchingArticles = articles.filter((article) => (
+  const matchingArticles = availableArticles.filter((article) => (
     (category === allArticlesLabel || article.category === category)
     && (!scopedSeries || article.series === scopedSeries)
   ));
@@ -713,7 +729,10 @@ function App() {
   const [showLoader, setShowLoader] = useState(true);
 
   useLayoutEffect(() => {
-    if (window.location.pathname.startsWith("/admin")) return;
+    if (window.location.pathname.startsWith("/admin")) {
+      setShowLoader(false);
+      return;
+    }
 
     const canControlScrollRestoration = "scrollRestoration" in window.history;
     const previousScrollRestoration = canControlScrollRestoration ? window.history.scrollRestoration : "auto";
@@ -735,7 +754,8 @@ function App() {
     const startedAt = performance.now();
     let completed = false;
     let releaseTimer: number | undefined;
-    const needsLittlePlanet = !window.location.pathname.startsWith("/admin");
+    const normalizedPath = window.location.pathname.replace(/\/+$/, "") || "/";
+    const needsLittlePlanet = normalizedPath === "/";
     let pageReady = document.readyState === "complete";
     let littlePlanetReady = !needsLittlePlanet;
 
@@ -925,6 +945,8 @@ function PublicApp() {
   const [activeCategory, setActiveCategory] = useState(() => initialRoute.category);
   const [activeSeries, setActiveSeries] = useState(() => initialRoute.series);
   const [articlePage, setArticlePage] = useState(() => initialRoute.page);
+  const [publishedArticles, setPublishedArticles] = useState<Article[]>([]);
+  const articleRouteInitialized = useRef(false);
   const [publishedCreations, setPublishedCreations] = useState<Creation[]>([]);
   const [publishedNotes, setPublishedNotes] = useState<Note[]>(notes);
   const [selectedArticle, setSelectedArticle] = useState<Article | null>(null);
@@ -948,26 +970,35 @@ function PublicApp() {
   });
 
   useEffect(() => {
-    const syncRoute = () => {
-      const route = readPublicRoute();
+    const syncRoute = (closeOpenContent: boolean) => {
+      const route = readPublicRoute(publishedArticles);
       setView(route.view);
       setActiveCategory(route.category);
       setActiveSeries(route.series);
       setArticlePage(route.page);
-      setSelectedArticle(null);
-      setSelectedCreation(null);
-      setSelectedNote(null);
+      if (closeOpenContent) {
+        setSelectedArticle(null);
+        setSelectedCreation(null);
+        setSelectedNote(null);
+      }
       setViewSequence((sequence) => sequence + 1);
       window.scrollTo({ top: 0, left: 0, behavior: "auto" });
     };
+    const handlePopState = () => syncRoute(true);
 
-    const route = readPublicRoute();
-    const canonicalPath = buildPublicPath(route.view, route.category, route.series, route.page);
-    const currentPath = window.location.pathname + window.location.search;
-    if (currentPath !== canonicalPath) window.history.replaceState({}, "", canonicalPath);
-    window.addEventListener("popstate", syncRoute);
-    return () => window.removeEventListener("popstate", syncRoute);
-  }, []);
+    if (publishedArticles.length > 0) {
+      const route = readPublicRoute(publishedArticles);
+      const canonicalPath = buildPublicPath(route.view, route.category, route.series, route.page);
+      const currentPath = window.location.pathname + window.location.search;
+      if (currentPath !== canonicalPath) window.history.replaceState({}, "", canonicalPath);
+      if (!articleRouteInitialized.current) {
+        articleRouteInitialized.current = true;
+        syncRoute(false);
+      }
+    }
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, [publishedArticles]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -999,6 +1030,38 @@ function PublicApp() {
         setApiState("online");
       })
       .catch(() => setApiState("offline"));
+  }, []);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    fetch("/api/articles", { signal: controller.signal })
+      .then((response) => {
+        if (!response.ok) throw new Error("Article request failed");
+        return response.json() as Promise<Article[]>;
+      })
+      .then((records) => {
+        if (!Array.isArray(records)) throw new Error("Invalid article response");
+        setPublishedArticles(records.filter((article) => (
+          Number.isInteger(article.id)
+          && article.id > 0
+          && Boolean(article.title)
+          && Boolean(article.category)
+          && Boolean(article.content)
+        )).map((article) => ({
+          ...article,
+          tags: Array.isArray(article.tags) ? article.tags : [],
+          series: article.series || "未分类专栏",
+          readTime: article.readTime || "-",
+          views: Number.isFinite(article.views) ? article.views : 0,
+          likes: Number.isFinite(article.likes) ? article.likes : 0,
+          summary: article.summary || article.title,
+        })));
+      })
+      .catch((error: unknown) => {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        setPublishedArticles([]);
+      });
+    return () => controller.abort();
   }, []);
 
   useEffect(() => {
@@ -1177,17 +1240,19 @@ function PublicApp() {
     return () => window.removeEventListener("resize", detectDeveloperTools);
   }, []);
 
+  const articleTaxonomy = useMemo(() => getArticleTaxonomy(publishedArticles), [publishedArticles]);
   const filteredArticles = useMemo(
-    () => articles.filter((article) => (activeCategory === allArticlesLabel || article.category === activeCategory) && (!activeSeries || article.series === activeSeries)),
-    [activeCategory, activeSeries],
+    () => publishedArticles.filter((article) => (activeCategory === allArticlesLabel || article.category === activeCategory) && (!activeSeries || article.series === activeSeries)),
+    [activeCategory, activeSeries, publishedArticles],
   );
- const articlePageCount = Math.max(1, Math.ceil(filteredArticles.length / articlesPerPage));
- const visibleArticlePage = Math.min(articlePage, articlePageCount);
+  const articlePageCount = Math.max(1, Math.ceil(filteredArticles.length / articlesPerPage));
+  const visibleArticlePage = Math.min(articlePage, articlePageCount);
   const paginatedArticles = useMemo(
     () => filteredArticles.slice((visibleArticlePage - 1) * articlesPerPage, visibleArticlePage * articlesPerPage),
     [filteredArticles, visibleArticlePage],
   );
-  const availableArticleSeries = activeCategory === allArticlesLabel ? [] : (articleSeriesByCategory[activeCategory] || []);
+  const availableArticleSeries = activeCategory === allArticlesLabel ? [] : (articleTaxonomy.articleSeriesByCategory[activeCategory] || []);
+  const popularArticles = useMemo(() => [...publishedArticles].sort((left, right) => right.views - left.views).slice(0, 5), [publishedArticles]);
 
   function updateArticleUrl(category: string, series: string, page: number, replace = false) {
     const targetPath = buildPublicPath("articles", category, series, page);
@@ -1222,6 +1287,29 @@ function PublicApp() {
     setSelectedCreation(null);
     setSelectedNote(null);
     setSelectedArticle(article);
+    void fetch(`/api/articles/${article.id}/view`, { method: "POST" })
+      .then((response) => response.ok ? response.json() as Promise<{ views: number; likes: number }> : Promise.reject(new Error("Article view failed")))
+      .then((engagement) => {
+        applyArticleEngagement(article.id, engagement);
+      })
+      .catch(() => undefined);
+  }
+
+  function applyArticleEngagement(id: number, engagement: { views: number; likes: number }) {
+    const updateArticle = (article: Article) => article.id === id ? { ...article, views: engagement.views, likes: engagement.likes } : article;
+    setPublishedArticles((current) => current.map(updateArticle));
+    setSelectedArticle((current) => current?.id === id ? updateArticle(current) : current);
+  }
+
+  async function likeArticle(article: Article) {
+    if (articleLikeCooldownEndsAt(article.id) > Date.now()) return false;
+    const response = await fetch(`/api/articles/${article.id}/like`, { method: "POST" });
+    if (!response.ok) return false;
+    const engagement = await response.json() as { views: number; likes: number };
+    if (!Number.isFinite(engagement.likes) || !Number.isFinite(engagement.views)) return false;
+    localStorage.setItem(articleLikeStorageKey(article.id), String(Date.now()));
+    applyArticleEngagement(article.id, engagement);
+    return true;
   }
 
   function openCreation(creation: Creation) {
@@ -1329,9 +1417,9 @@ function PublicApp() {
           <p className="intro-copy">汇集 Java 技术文章、阅读笔记、AI 图像作品和 AI 编程项目。</p>
         </section>}
 
-        {view === "home" && <Home navigate={navigate} setSelectedArticle={openArticle} repositories={githubRepositories} repositoryState={repositoryState} />}
+        {view === "home" && <Home navigate={navigate} articles={publishedArticles} setSelectedArticle={openArticle} repositories={githubRepositories} repositoryState={repositoryState} />}
         {view === "articles" && (
-          <Articles activeCategory={activeCategory} activeSeries={activeSeries} availableSeries={availableArticleSeries} setActiveCategory={selectArticleCategory} setActiveSeries={selectArticleSeries} paginatedArticles={paginatedArticles} articlePage={visibleArticlePage} articlePageCount={articlePageCount} setArticlePage={selectArticlePage} setSelectedArticle={openArticle} />
+          <Articles activeCategory={activeCategory} activeSeries={activeSeries} availableSeries={availableArticleSeries} categories={articleTaxonomy.categories} popularArticles={popularArticles} setActiveCategory={selectArticleCategory} setActiveSeries={selectArticleSeries} paginatedArticles={paginatedArticles} articlePage={visibleArticlePage} articlePageCount={articlePageCount} setArticlePage={selectArticlePage} setSelectedArticle={openArticle} />
         )}
         {view === "notes" && <Notes notes={publishedNotes} setSelectedNote={openNote} />}
         {view === "gallery" && <Gallery creations={publishedCreations} setSelectedCreation={openCreation} />}
@@ -1340,7 +1428,7 @@ function PublicApp() {
         {view === "guestbook" && <Guestbook visitor={visitor} message={message} setVisitor={setVisitor} setMessage={setMessage} comments={comments} submitMessage={submitMessage} />}
       </PageStage>
 
-      {selectedArticle && <ArticleReader article={selectedArticle} close={() => setSelectedArticle((current) => current === selectedArticle ? null : current)} key={selectedArticle.title} />}
+      {selectedArticle && <ArticleReader article={selectedArticle} likeArticle={likeArticle} close={() => setSelectedArticle((current) => current === selectedArticle ? null : current)} key={selectedArticle.id} />}
       {selectedCreation && <CreationDrawer creation={selectedCreation} close={() => setSelectedCreation((current) => current === selectedCreation ? null : current)} key={selectedCreation.title} />}
       {selectedNote && <NoteDialog note={selectedNote} close={() => setSelectedNote((current) => current === selectedNote ? null : current)} key={selectedNote.title} />}
 
@@ -1372,7 +1460,7 @@ function PageStage({ view, children }: { view: View; children: ReactNode }) {
   return <div className={`page-stage page-stage-${view}`} ref={stageRef}>{children}</div>;
 }
 
-function Home({ navigate, setSelectedArticle, repositories, repositoryState }: { navigate: (view: View) => void; setSelectedArticle: (article: Article) => void; repositories: GitHubRepositories | null; repositoryState: RepositoryState }) {
+function Home({ navigate, articles, setSelectedArticle, repositories, repositoryState }: { navigate: (view: View) => void; articles: Article[]; setSelectedArticle: (article: Article) => void; repositories: GitHubRepositories | null; repositoryState: RepositoryState }) {
   const profileName = "Cameron";
   const [displayedName, setDisplayedName] = useState("");
   const projects = repositories?.repositories ?? [];
@@ -1402,6 +1490,7 @@ function Home({ navigate, setSelectedArticle, repositories, repositoryState }: {
     const heroContent = root.querySelector<HTMLElement>(".hero-content");
     const avatar = root.querySelector<HTMLElement>(".profile-avatar");
     const profileItems = Array.from(root.querySelectorAll<HTMLElement>(".profile-copy > *"));
+    const articleSection = root.querySelector<HTMLElement>(".home-article-systems");
     const articleSystemInner = root.querySelector<HTMLElement>(".home-article-systems-inner");
     const articleHoverBg = root.querySelector<HTMLElement>(".home-article-hover-bg");
     const articleCursor = root.querySelector<HTMLElement>(".home-article-cursor");
@@ -1417,6 +1506,39 @@ function Home({ navigate, setSelectedArticle, repositories, repositoryState }: {
       const entrance = gsap.timeline({ defaults: { ease: "power3.out" } });
       if (avatar) entrance.from(avatar, { autoAlpha: 0, scale: 0.9, duration: 0.58 });
       if (profileItems.length > 0) entrance.from(profileItems, { autoAlpha: 0, x: 22, duration: 0.48, stagger: 0.08 }, avatar ? 0.14 : 0);
+
+      if (articleSection && articleSystemInner) {
+        const revealArticleList = () => gsap.to(articleSystemInner, {
+          autoAlpha: 1,
+          y: 0,
+          duration: 0.55,
+          ease: "power3.out",
+          overwrite: "auto",
+        });
+        const hideArticleList = () => gsap.to(articleSystemInner, {
+          autoAlpha: 0,
+          y: -14,
+          duration: 0.4,
+          ease: "power2.in",
+          overwrite: "auto",
+        });
+
+        gsap.set(articleSystemInner, { autoAlpha: 0, y: 18 });
+        const articleFade = ScrollTrigger.create({
+          trigger: articleSection,
+          start: "top 82%",
+          end: "bottom 18%",
+          onEnter: revealArticleList,
+          onEnterBack: revealArticleList,
+          onLeave: hideArticleList,
+          onLeaveBack: hideArticleList,
+          invalidateOnRefresh: true,
+        });
+        cleanup.push(() => {
+          articleFade.kill();
+          gsap.set(articleSystemInner, { clearProps: "transform,opacity,visibility" });
+        });
+      }
 
       if (articleSystemInner && articleHoverBg && articleRows.length > 0) {
         gsap.set(articleHoverBg, { autoAlpha: 0, y: 0, scaleY: 0, transformOrigin: "top center", height: articleRows[0]?.offsetHeight || 94 });
@@ -1729,7 +1851,7 @@ function HomeQuickFolder({ navigate }: { navigate: (view: View) => void }) {
   );
 }
 
-function Articles({ activeCategory, activeSeries, availableSeries, setActiveCategory, setActiveSeries, paginatedArticles, articlePage, articlePageCount, setArticlePage, setSelectedArticle }: { activeCategory: string; activeSeries: string; availableSeries: string[]; setActiveCategory: (category: string) => void; setActiveSeries: (series: string) => void; paginatedArticles: Article[]; articlePage: number; articlePageCount: number; setArticlePage: (page: number) => void; setSelectedArticle: (article: Article) => void }) {
+function Articles({ activeCategory, activeSeries, availableSeries, categories, popularArticles, setActiveCategory, setActiveSeries, paginatedArticles, articlePage, articlePageCount, setArticlePage, setSelectedArticle }: { activeCategory: string; activeSeries: string; availableSeries: string[]; categories: string[]; popularArticles: Article[]; setActiveCategory: (category: string) => void; setActiveSeries: (series: string) => void; paginatedArticles: Article[]; articlePage: number; articlePageCount: number; setArticlePage: (page: number) => void; setSelectedArticle: (article: Article) => void }) {
   const articleRef = useRef<HTMLElement>(null);
 
   useGSAP(() => {
@@ -1756,7 +1878,7 @@ function Articles({ activeCategory, activeSeries, availableSeries, setActiveCate
     <div className="article-feed">
       <h1>最新发布</h1>
       <div className="article-list">
-        {paginatedArticles.map((article) => <button className="article-feed-item" key={article.title} onClick={() => setSelectedArticle(article)}><h2>{article.title}</h2><p>{article.excerpt}</p><span className="article-read-action">阅读全文 <i aria-hidden="true">→</i></span></button>)}
+        {paginatedArticles.length > 0 ? paginatedArticles.map((article) => <button className="article-feed-item" key={article.id} onClick={() => setSelectedArticle(article)}><h2>{article.title}</h2><p>{article.summary}</p><span className="article-read-action">阅读全文 <i aria-hidden="true">→</i></span></button>) : <p className="article-empty-state">暂无已发布文章</p>}
       </div>
       <nav className="article-pagination" aria-label="文章分页">
         <button className="article-pagination-arrow" type="button" onClick={() => setArticlePage(articlePage - 1)} disabled={articlePage === 1} aria-label="上一页" title="上一页"><ChevronLeft aria-hidden="true" size={17} /></button>
@@ -1778,7 +1900,7 @@ function Articles({ activeCategory, activeSeries, availableSeries, setActiveCate
           </div>
         </div>}
       </section>
-      <section className="popular-articles"><h2>热门文章</h2><div>{articles.slice(0, 5).map((article) => <button key={article.title} onClick={() => setSelectedArticle(article)}><span aria-hidden="true">→</span>{article.title}</button>)}</div></section>
+      <section className="popular-articles"><h2>热门文章</h2><div>{popularArticles.map((article) => <button key={article.id} onClick={() => setSelectedArticle(article)}><span aria-hidden="true">→</span>{article.title}</button>)}</div></section>
     </aside>
   </section>;
 }
@@ -2249,13 +2371,13 @@ function SteamGameAccordion({ games }: { games: SteamGame[] }) {
 
 function Guestbook({ visitor, message, setVisitor, setMessage, comments, submitMessage }: { visitor: string; message: string; setVisitor: (value: string) => void; setMessage: (value: string) => void; comments: GuestbookComment[]; submitMessage: (event: FormEvent<HTMLFormElement>, color: NoteColor) => void }) {
   const [selectedColor, setSelectedColor] = useState<NoteColor>("ice");
-  const visibleComments = comments.length > 0 ? comments : mockGuestbookComments;
+  const visibleComments = comments;
   const boardHeight = 690 + Math.max(0, Math.ceil(visibleComments.length / noteLayouts.length) - 1) * 180;
 
-  return <><div className="guestbook-grid-wrapper" aria-hidden="true"><div className="guestbook-grid-background" /></div><section className="guestbook-wall"><div className="guestbook-canvas"><div className="note-board" aria-live="polite" style={{ "--note-board-height": `${boardHeight}px` } as React.CSSProperties}>{visibleComments.map((comment, index) => { const layout = getNoteLayout(index); return <article className={`visitor-note visitor-note-${comment.color}`} key={`${comment.name}-${index}`} style={{ "--note-x": layout.x, "--note-y": layout.y, "--note-tilt": `${layout.tilt}deg`, "--note-z": layout.z, "--note-delay": `${index * 55}ms` } as React.CSSProperties}><p className="visitor-note-title">{comment.name}</p><p className="visitor-note-description">{comment.body}</p><time className="visitor-note-date">{comment.date}</time><div className="visitor-note-corner" aria-hidden="true"><span>→</span></div></article>; })}</div><section className="guestbook-editor"><form className="guestbook-submit-form" onSubmit={(event) => submitMessage(event, selectedColor)}><div className="guestbook-submit-heading"><p>发布留言</p><span>{message.length}/160</span></div><div className="guestbook-submit-name"><input aria-label="昵称" value={visitor} onChange={(event) => setVisitor(event.target.value)} placeholder="昵称" maxLength={20} required /></div><div className="guestbook-submit-message"><textarea aria-label="留言内容" value={message} onChange={(event) => setMessage(event.target.value)} placeholder="留言内容" maxLength={160} rows={4} required /></div><div className="guestbook-submit-footer"><div className="guestbook-submit-colors" aria-label="便签颜色">{noteColors.map((color) => <button key={color} type="button" className={`guestbook-submit-color guestbook-submit-color-${color}${selectedColor === color ? " selected" : ""}`} onClick={() => setSelectedColor(color)} aria-label={`选择${color}颜色`} />)}</div><button type="submit">提交留言</button></div><div className="guestbook-submit-background" aria-hidden="true" /><div className="guestbook-submit-white-filter" aria-hidden="true" /></form></section></div></section></>;
+  return <><div className="guestbook-grid-wrapper" aria-hidden="true"><div className="guestbook-grid-background" /></div><section className="guestbook-wall"><div className="guestbook-canvas"><div className="note-board" aria-live="polite" style={{ "--note-board-height": `${boardHeight}px` } as React.CSSProperties}>{visibleComments.length > 0 ? visibleComments.map((comment, index) => { const layout = getNoteLayout(index); return <article className={`visitor-note visitor-note-${comment.color}`} key={`${comment.name}-${index}`} style={{ "--note-x": layout.x, "--note-y": layout.y, "--note-tilt": `${layout.tilt}deg`, "--note-z": layout.z, "--note-delay": `${index * 55}ms` } as React.CSSProperties}><p className="visitor-note-title">{comment.name}</p><p className="visitor-note-description">{comment.body}</p><time className="visitor-note-date">{comment.date}</time><div className="visitor-note-corner" aria-hidden="true"><span>→</span></div></article>; }) : <p className="guestbook-empty-state">暂无留言</p>}</div><section className="guestbook-editor"><form className="guestbook-submit-form" onSubmit={(event) => submitMessage(event, selectedColor)}><div className="guestbook-submit-heading"><p>发布留言</p><span>{message.length}/160</span></div><div className="guestbook-submit-name"><input aria-label="昵称" value={visitor} onChange={(event) => setVisitor(event.target.value)} placeholder="昵称" maxLength={20} required /></div><div className="guestbook-submit-message"><textarea aria-label="留言内容" value={message} onChange={(event) => setMessage(event.target.value)} placeholder="留言内容" maxLength={160} rows={4} required /></div><div className="guestbook-submit-footer"><div className="guestbook-submit-colors" aria-label="便签颜色">{noteColors.map((color) => <button key={color} type="button" className={`guestbook-submit-color guestbook-submit-color-${color}${selectedColor === color ? " selected" : ""}`} onClick={() => setSelectedColor(color)} aria-label={`选择${color}颜色`} />)}</div><button type="submit">提交留言</button></div><div className="guestbook-submit-background" aria-hidden="true" /><div className="guestbook-submit-white-filter" aria-hidden="true" /></form></section></div></section></>;
 }
 
-function ArticleReader({ article, close }: { article: Article; close: () => void }) {
+function ArticleReader({ article, likeArticle, close }: { article: Article; likeArticle: (article: Article) => Promise<boolean>; close: () => void }) {
   const readerRef = useRef<HTMLElement>(null);
   const contentRef = useRef<HTMLElement>(null);
   const outlineRef = useRef<HTMLElement>(null);
@@ -2265,7 +2387,18 @@ function ArticleReader({ article, close }: { article: Article; close: () => void
   const [headings, setHeadings] = useState<ArticleHeading[]>([]);
   const [activeHeading, setActiveHeading] = useState(0);
   const [outlineOpen, setOutlineOpen] = useState(false);
+  const [likeCooldownEndsAt, setLikeCooldownEndsAt] = useState(() => articleLikeCooldownEndsAt(article.id));
+  const [liking, setLiking] = useState(false);
   const [closing, requestClose] = useAnimatedDismiss(close, 180);
+  const likeCooldownActive = likeCooldownEndsAt > Date.now();
+  const remainingLikeMinutes = Math.max(1, Math.ceil((likeCooldownEndsAt - Date.now()) / 60000));
+  const likeLabel = likeCooldownActive ? `${remainingLikeMinutes} 分钟后可再次点赞` : "点赞";
+
+  useEffect(() => {
+    if (!likeCooldownActive) return;
+    const timer = window.setTimeout(() => setLikeCooldownEndsAt(0), likeCooldownEndsAt - Date.now());
+    return () => window.clearTimeout(timer);
+  }, [likeCooldownActive, likeCooldownEndsAt]);
 
   useEffect(() => {
     outlineOpenRef.current = outlineOpen;
@@ -2377,7 +2510,7 @@ function ArticleReader({ article, close }: { article: Article; close: () => void
     <section className={`article-reader${closing ? " is-closing" : ""}`} aria-label="文章正文" aria-modal="true" role="dialog" ref={readerRef} tabIndex={-1}>
       <header className="article-reader-header"><button className="article-reader-back" onClick={requestClose} ref={backButtonRef}>← 返回文章</button></header>
       <article className="article-reader-content" ref={contentRef}>
-        <header className="article-reader-intro"><p>{article.category} · {article.series}</p><h1>{article.title}</h1><div className="article-reader-meta"><time>{article.date}</time><span aria-hidden="true">·</span><span>{article.readTime}</span><span aria-hidden="true">·</span><span className="article-reader-views" aria-label={`浏览量 ${article.views.toLocaleString("zh-CN")}`}><Eye aria-hidden="true" size={15} strokeWidth={1.8} />{article.views.toLocaleString("zh-CN")}</span></div></header>
+        <header className="article-reader-intro"><p>{article.category} · {article.series}</p><h1>{article.title}</h1><div className="article-reader-meta"><time>{formatArticleDate(article.date)}</time><span aria-hidden="true">·</span><span>{article.readTime}</span><span aria-hidden="true">·</span><span className="article-reader-views" aria-label={`浏览量 ${article.views.toLocaleString("zh-CN")}`}><Eye aria-hidden="true" size={15} strokeWidth={1.8} />{article.views.toLocaleString("zh-CN")}</span><button className={`article-reader-like${likeCooldownActive ? " is-liked" : ""}`} type="button" disabled={likeCooldownActive || liking} aria-label={likeLabel} title={likeLabel} onClick={() => { setLiking(true); void likeArticle(article).then((saved) => { if (saved) setLikeCooldownEndsAt(Date.now() + articleLikeCooldownMs); }).finally(() => setLiking(false)); }}><Heart size={15} fill={likeCooldownActive ? "currentColor" : "none"} aria-hidden="true" />{article.likes.toLocaleString("zh-CN")}</button></div></header>
         <div className="markdown-content"><ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>{article.content}</ReactMarkdown></div>
       </article>
       {headings.length > 1 && (

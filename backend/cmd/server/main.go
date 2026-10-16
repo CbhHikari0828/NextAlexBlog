@@ -125,7 +125,10 @@ type noteRecord struct {
 type noteStore interface {
 	ListNotes(context.Context) ([]noteRecord, error)
 	SaveNote(context.Context, noteRecord) (noteRecord, error)
+	DeleteNote(context.Context, int64) error
 }
+
+var errNoteNotFound = errors.New("note not found")
 
 type guestbookMessage struct {
 	ID        int64     `json:"id"`
@@ -438,6 +441,17 @@ func (store postgresNoteStore) SaveNote(ctx context.Context, note noteRecord) (n
 		return noteRecord{}, fmt.Errorf("save note: %w", err)
 	}
 	return note, nil
+}
+
+func (store postgresNoteStore) DeleteNote(ctx context.Context, id int64) error {
+	result, err := store.pool.Exec(ctx, `DELETE FROM notes WHERE id = $1`, id)
+	if err != nil {
+		return fmt.Errorf("delete note: %w", err)
+	}
+	if result.RowsAffected() == 0 {
+		return errNoteNotFound
+	}
+	return nil
 }
 
 type ossGalleryImageStorage struct {
@@ -757,6 +771,13 @@ func main() {
 	if err := ensureGuestbookMessagesTable(context.Background(), pool); err != nil {
 		log.Fatalf("ensure guestbook messages table: %v", err)
 	}
+	if err := ensureArticleTables(context.Background(), pool); err != nil {
+		log.Fatalf("ensure article tables: %v", err)
+	}
+	articleStore := postgresArticleStore{pool: pool}
+	if err := migrateLegacyArticles(context.Background(), pool, articleStore); err != nil {
+		log.Fatalf("migrate legacy articles: %v", err)
+	}
 	galleryStorage, storageErr := newOSSGalleryImageStorage()
 	if storageErr != nil && !errors.Is(storageErr, errGalleryStorageNotConfigured) {
 		log.Printf("gallery image storage unavailable: %v", storageErr)
@@ -765,6 +786,15 @@ func main() {
 	router := gin.New()
 	router.Use(gin.Logger(), gin.Recovery())
 	router.GET("/api/health", healthHandler(pool))
+	router.GET("/api/articles", articlesHandler(articleStore, false))
+	router.GET("/api/articles/:id", articleHandler(articleStore, false))
+	router.POST("/api/articles/:id/view", articleEngagementHandler(articleStore, "view"))
+	router.POST("/api/articles/:id/like", articleEngagementHandler(articleStore, "like"))
+	router.GET("/api/admin/articles", articlesHandler(articleStore, true))
+	router.GET("/api/admin/articles/:id", articleHandler(articleStore, true))
+	router.POST("/api/admin/articles", articleCreateHandler(articleStore))
+	router.PUT("/api/admin/articles/:id", articleUpdateHandler(articleStore))
+	router.DELETE("/api/admin/articles/:id", articleDeleteHandler(articleStore))
 	githubClient := &http.Client{Timeout: 10 * time.Second}
 	githubStore := postgresGitHubOverviewStore{pool: pool}
 	router.GET("/api/github/contributions", githubContributionsSnapshotHandler(githubStore))
@@ -794,6 +824,7 @@ func main() {
 	noteStore := postgresNoteStore{pool: pool}
 	router.GET("/api/notes", notesHandler(noteStore))
 	router.POST("/api/admin/notes", noteCreateHandler(noteStore))
+	router.DELETE("/api/admin/notes/:id", noteDeleteHandler(noteStore))
 	router.GET("/api/open-source-tools", openSourceToolsHandler(pool, false))
 	router.GET("/api/admin/open-source-tools", openSourceToolsHandler(pool, true))
 	router.POST("/api/admin/open-source-tools/metadata", openSourceToolMetadataHandler(githubClient))
@@ -2037,6 +2068,25 @@ func noteCreateHandler(store noteStore) gin.HandlerFunc {
 			return
 		}
 		c.JSON(http.StatusCreated, note)
+	}
+}
+
+func noteDeleteHandler(store noteStore) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+		if err != nil || id < 1 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid note id"})
+			return
+		}
+		if err := store.DeleteNote(c.Request.Context(), id); errors.Is(err, errNoteNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "note not found"})
+			return
+		} else if err != nil {
+			log.Printf("delete note: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "note could not be deleted"})
+			return
+		}
+		c.Status(http.StatusNoContent)
 	}
 }
 

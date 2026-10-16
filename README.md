@@ -5,37 +5,50 @@ NextAlex Blog 是一个个人博客与创作展示站点，前台用于展示技
 ## 项目结构
 
 - `frontend/`：React + TypeScript + Vite 前端，开发时运行在 Docker 容器中。
-- `backend/`：Go + Gin API，开发时建议直接在宿主机运行，方便调试断点和日志。
+- `backend/`：Go + Gin API，作为 Compose 服务构建并运行。
 - `database/`：PostgreSQL 初始化脚本和数据库说明。
-- `docker-compose.yml`：开发环境中的 PostgreSQL 和前端容器编排。
+- `docker-compose.yml`：PostgreSQL、后端和前端容器编排。
 
 ## 本地启动
 
 1. 如需自定义配置，复制 `.env.example` 为 `.env` 并修改对应环境变量。
-2. 启动 PostgreSQL 和前端开发服务：
+2. 构建并启动 PostgreSQL、后端和前端服务：
 
    ```powershell
-   docker compose up --build postgres frontend
+   docker compose up --build -d
    ```
 
-3. 另开一个终端启动 Go 后端：
+3. 打开 `http://localhost:5173`。
 
-   ```powershell
-   cd backend
-   go run ./cmd/server
-   ```
+默认情况下，前端源码目录会挂载到容器内，Vite 使用轮询触发 HMR；前端容器会把 `/api` 请求代理到 Compose 内的后端服务。前端、后端和 PostgreSQL 分别暴露在宿主机 `5173`、`8090` 和 `55432` 端口。
 
-4. 打开 `http://localhost:5173`。
+## 镜像部署
 
-默认情况下，前端源码目录会挂载到容器内，Vite 使用轮询触发 HMR；前端容器会把 `/api` 请求代理到宿主机的 `http://host.docker.internal:8090`，PostgreSQL 暴露在宿主机 `localhost:55432`。
+生产部署使用三个镜像：`nextalexblog-postgres`（包含初始化 SQL）、`nextalexblog-backend` 和 `nextalexblog-frontend`。前端镜像由 Nginx 提供静态资源，并在容器网络内把 `/api` 反向代理到后端；生产环境仅暴露前端端口，数据库和后端不直接对公网开放。
+
+图库图片存储在阿里云 OSS，不使用 MinIO，也不存入 PostgreSQL。部署前将 `.env.production.example` 复制为 `.env.production`，填入镜像仓库、强密码，以及实际需要的 OSS、SMTP、Steam 配置。
+
+构建并推送镜像：
+
+```powershell
+docker compose --env-file .env.production -f docker-compose.production.yml -f docker-compose.images.yml build
+docker compose --env-file .env.production -f docker-compose.production.yml -f docker-compose.images.yml push
+```
+
+在部署服务器上只拉取并运行镜像：
+
+```powershell
+docker compose --env-file .env.production -f docker-compose.production.yml pull
+docker compose --env-file .env.production -f docker-compose.production.yml up -d
+```
 
 ## 当前功能
 
 项目当前包括：
 
 - 首页：个人介绍、3D 小地球模型、横向滚动叙事、文章入口和全局鼠标尾迹。
-- 文章：支持分类和专栏两级筛选，支持 `/articles?category=...&series=...` 形式的链接访问与刷新恢复。
-- 笔记：支持从后台发布 Markdown 笔记，前台以自适应卡片展示。
+- 文章：内容、分类、标签和发布状态持久化在 PostgreSQL；后台支持草稿、发布、编辑和删除，前台支持分类/专栏筛选、浏览量和轻量点赞。
+- 笔记：支持从后台发布 Markdown 笔记、列出已发布笔记并删除，前台以自适应卡片展示。
 - 创作图库：图片上传到阿里云 OSS，元数据写入 PostgreSQL，后台可预览、编辑和删除。
 - 创作中心：展示 GitHub 快照数据、贡献热力图和项目状态。
 - 娱乐专栏：展示 Steam 游戏库快照、音乐偏好、开源工具和中国地图轨迹。
@@ -55,6 +68,8 @@ NextAlex Blog 是一个个人博客与创作展示站点，前台用于展示技
 ## 常用接口
 
 - `GET /api/health`：检查后端和数据库状态。
+- `GET /api/articles`、`GET /api/articles/:id`：读取已发布文章。
+- `POST /api/articles/:id/view`、`POST /api/articles/:id/like`：记录文章浏览和点赞计数。
 - `GET /api/gallery`：读取已发布图库。
 - `GET /api/notes`：读取已发布笔记。
 - `GET /api/music`：读取音乐偏好。
@@ -64,7 +79,7 @@ NextAlex Blog 是一个个人博客与创作展示站点，前台用于展示技
 - `GET /api/github/profile`、`GET /api/github/repositories`、`GET /api/github/contributions`：读取 GitHub 快照。
 - `GET /api/steam/overview`：读取 Steam 快照。
 
-后台接口集中在 `/api/admin/*`，包括文章/笔记发布、图库管理、音乐导入、GitHub/Steam 刷新、开源工具管理和留言删除。
+后台接口集中在 `/api/admin/*`，包括 `GET/POST/PUT/DELETE /api/admin/articles`、`POST/DELETE /api/admin/notes`、图库管理、音乐导入、GitHub/Steam 刷新、开源工具管理和留言删除。
 
 ## 环境变量
 
@@ -80,6 +95,8 @@ NextAlex Blog 是一个个人博客与创作展示站点，前台用于展示技
 ## 数据库说明
 
 初始化 SQL 位于 `database/init/`。PostgreSQL 只会在首次创建数据卷时执行初始化脚本，之后重启容器会保留 `postgres_data` 卷中的已有数据。
+
+后端启动时会执行非破坏性文章 schema 补齐，并通过迁移记录幂等导入历史前端文章；已有文章不会被重复导入或覆盖。
 
 如需重新初始化数据库，需要先明确备份和清理数据卷，再重新启动服务。
 

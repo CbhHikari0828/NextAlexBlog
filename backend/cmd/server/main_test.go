@@ -44,6 +44,11 @@ type memoryNoteStore struct {
 	nextID int64
 }
 
+type memoryArticleStore struct {
+	articles []articleRecord
+	nextID   int64
+}
+
 func (store *memoryGitHubOverviewStore) LoadGitHubOverview(context.Context) (githubOverview, time.Time, error) {
 	if !store.hasSnapshot {
 		return githubOverview{}, time.Time{}, errGitHubOverviewNotFound
@@ -114,12 +119,183 @@ func (store *memoryNoteStore) SaveNote(_ context.Context, note noteRecord) (note
 	return note, nil
 }
 
+func (store *memoryNoteStore) DeleteNote(_ context.Context, id int64) error {
+	for index, note := range store.notes {
+		if note.ID == id {
+			store.notes = append(store.notes[:index], store.notes[index+1:]...)
+			return nil
+		}
+	}
+	return errNoteNotFound
+}
+
+func (store *memoryArticleStore) ListArticles(_ context.Context, includeDrafts bool) ([]articleRecord, error) {
+	articles := make([]articleRecord, 0, len(store.articles))
+	for _, article := range store.articles {
+		if includeDrafts || article.Status == "published" {
+			article.Tags = append([]string(nil), article.Tags...)
+			articles = append(articles, article)
+		}
+	}
+	return articles, nil
+}
+
+func (store *memoryArticleStore) GetArticle(_ context.Context, id int64, includeDrafts bool) (articleRecord, error) {
+	for _, article := range store.articles {
+		if article.ID == id && (includeDrafts || article.Status == "published") {
+			article.Tags = append([]string(nil), article.Tags...)
+			return article, nil
+		}
+	}
+	return articleRecord{}, errArticleNotFound
+}
+
+func (store *memoryArticleStore) CreateArticle(_ context.Context, article articleRecord) (articleRecord, error) {
+	for _, existing := range store.articles {
+		if existing.Slug == article.Slug {
+			return articleRecord{}, errArticleSlugExists
+		}
+	}
+	store.nextID++
+	article.ID = store.nextID
+	article.CreatedAt = time.Date(2026, time.August, 19, 12, 0, 0, 0, time.UTC)
+	article.UpdatedAt = article.CreatedAt
+	store.articles = append(store.articles, article)
+	return article, nil
+}
+
+func (store *memoryArticleStore) UpdateArticle(_ context.Context, article articleRecord) (articleRecord, error) {
+	for index, existing := range store.articles {
+		if existing.ID != article.ID && existing.Slug == article.Slug {
+			return articleRecord{}, errArticleSlugExists
+		}
+		if existing.ID == article.ID {
+			article.Views = existing.Views
+			article.Likes = existing.Likes
+			article.CreatedAt = existing.CreatedAt
+			article.UpdatedAt = time.Date(2026, time.August, 19, 13, 0, 0, 0, time.UTC)
+			store.articles[index] = article
+			return article, nil
+		}
+	}
+	return articleRecord{}, errArticleNotFound
+}
+
+func (store *memoryArticleStore) DeleteArticle(_ context.Context, id int64) error {
+	for index, article := range store.articles {
+		if article.ID == id {
+			store.articles = append(store.articles[:index], store.articles[index+1:]...)
+			return nil
+		}
+	}
+	return errArticleNotFound
+}
+
+func (store *memoryArticleStore) SeedArticle(ctx context.Context, article articleRecord) (bool, error) {
+	if _, err := store.CreateArticle(ctx, article); errors.Is(err, errArticleSlugExists) {
+		return false, nil
+	} else if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func (store *memoryArticleStore) RecordArticleView(_ context.Context, id int64) (articleEngagement, error) {
+	for index := range store.articles {
+		if store.articles[index].ID == id && store.articles[index].Status == "published" {
+			store.articles[index].Views++
+			return articleEngagement{Views: store.articles[index].Views, Likes: store.articles[index].Likes}, nil
+		}
+	}
+	return articleEngagement{}, errArticleNotFound
+}
+
+func (store *memoryArticleStore) RecordArticleLike(_ context.Context, id int64) (articleEngagement, error) {
+	for index := range store.articles {
+		if store.articles[index].ID == id && store.articles[index].Status == "published" {
+			store.articles[index].Likes++
+			return articleEngagement{Views: store.articles[index].Views, Likes: store.articles[index].Likes}, nil
+		}
+	}
+	return articleEngagement{}, errArticleNotFound
+}
+
+func TestArticlesSupportCRUDPublishingAndEngagement(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	store := &memoryArticleStore{}
+	router := gin.New()
+	router.GET("/articles", articlesHandler(store, false))
+	router.GET("/admin/articles", articlesHandler(store, true))
+	router.POST("/admin/articles", articleCreateHandler(store))
+	router.PUT("/admin/articles/:id", articleUpdateHandler(store))
+	router.DELETE("/admin/articles/:id", articleDeleteHandler(store))
+	router.POST("/articles/:id/view", articleEngagementHandler(store, "view"))
+	router.POST("/articles/:id/like", articleEngagementHandler(store, "like"))
+
+	create := func(payload string) articleRecord {
+		response := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodPost, "/admin/articles", strings.NewReader(payload))
+		request.Header.Set("Content-Type", "application/json")
+		router.ServeHTTP(response, request)
+		if response.Code != http.StatusCreated {
+			t.Fatalf("POST /admin/articles returned %d: %s", response.Code, response.Body.String())
+		}
+		var article articleRecord
+		if err := json.Unmarshal(response.Body.Bytes(), &article); err != nil {
+			t.Fatalf("decode created article: %v", err)
+		}
+		return article
+	}
+
+	published := create(`{"title":"Published article","category":"Backend","series":"API","tags":["Go","Postgres"],"summary":"Summary","date":"2026-08-19","readTime":"5 min","content":"# Published","status":"published"}`)
+	draft := create(`{"title":"Draft article","category":"Backend","content":"# Draft","status":"draft"}`)
+
+	publicResponse := httptest.NewRecorder()
+	router.ServeHTTP(publicResponse, httptest.NewRequest(http.MethodGet, "/articles", nil))
+	var publicArticles []articleRecord
+	if publicResponse.Code != http.StatusOK || json.Unmarshal(publicResponse.Body.Bytes(), &publicArticles) != nil || len(publicArticles) != 1 || publicArticles[0].ID != published.ID {
+		t.Fatalf("public article list = %d %s", publicResponse.Code, publicResponse.Body.String())
+	}
+
+	adminResponse := httptest.NewRecorder()
+	router.ServeHTTP(adminResponse, httptest.NewRequest(http.MethodGet, "/admin/articles", nil))
+	var adminArticles []articleRecord
+	if adminResponse.Code != http.StatusOK || json.Unmarshal(adminResponse.Body.Bytes(), &adminArticles) != nil || len(adminArticles) != 2 {
+		t.Fatalf("admin article list = %d %s", adminResponse.Code, adminResponse.Body.String())
+	}
+
+	for _, endpoint := range []string{"/articles/1/view", "/articles/1/like"} {
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, httptest.NewRequest(http.MethodPost, endpoint, nil))
+		if response.Code != http.StatusOK {
+			t.Fatalf("POST %s returned %d: %s", endpoint, response.Code, response.Body.String())
+		}
+	}
+
+	updateResponse := httptest.NewRecorder()
+	updateRequest := httptest.NewRequest(http.MethodPut, "/admin/articles/1", strings.NewReader(`{"title":"Updated article","category":"Backend","content":"# Updated","status":"published"}`))
+	updateRequest.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(updateResponse, updateRequest)
+	var updated articleRecord
+	if updateResponse.Code != http.StatusOK || json.Unmarshal(updateResponse.Body.Bytes(), &updated) != nil || updated.Views != 1 || updated.Likes != 1 || updated.Title != "Updated article" {
+		t.Fatalf("update article = %d %s", updateResponse.Code, updateResponse.Body.String())
+	}
+
+	deleteResponse := httptest.NewRecorder()
+	router.ServeHTTP(deleteResponse, httptest.NewRequest(http.MethodDelete, "/admin/articles/2", nil))
+	if deleteResponse.Code != http.StatusNoContent || len(store.articles) != 1 || store.articles[0].ID != published.ID {
+		t.Fatalf("delete article = %d, remaining=%#v", deleteResponse.Code, store.articles)
+	}
+	_ = draft
+}
+
 func TestNotesCanBePublishedAndListed(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	store := &memoryNoteStore{}
 	router := gin.New()
 	router.GET("/notes", notesHandler(store))
 	router.POST("/admin/notes", noteCreateHandler(store))
+	router.DELETE("/admin/notes/:id", noteDeleteHandler(store))
 
 	publishResponse := httptest.NewRecorder()
 	publishRequest := httptest.NewRequest(http.MethodPost, "/admin/notes", strings.NewReader(`{"title":"Concurrent notes","date":"2026-08-19","content":"# Heading\n\nSaved markdown."}`))
@@ -148,6 +324,12 @@ func TestNotesCanBePublishedAndListed(t *testing.T) {
 	}
 	if len(listed) != 1 || listed[0].ID != published.ID {
 		t.Fatalf("unexpected listed notes: %#v", listed)
+	}
+
+	deleteResponse := httptest.NewRecorder()
+	router.ServeHTTP(deleteResponse, httptest.NewRequest(http.MethodDelete, "/admin/notes/1", nil))
+	if deleteResponse.Code != http.StatusNoContent || len(store.notes) != 0 {
+		t.Fatalf("DELETE /admin/notes/1 returned %d with notes %#v", deleteResponse.Code, store.notes)
 	}
 }
 

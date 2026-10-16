@@ -28,6 +28,7 @@ type MarkdownDraft = {
   tags: string;
   summary: string;
   date: string;
+  readTime: string;
   content: string;
 };
 
@@ -111,6 +112,30 @@ type GalleryCreation = {
   createdAt: string;
 };
 
+type AdminNote = {
+  id: number;
+  title: string;
+  date: string;
+  content: string;
+  createdAt: string;
+};
+
+type AdminArticle = {
+  id: number;
+  slug: string;
+  title: string;
+  summary: string;
+  content: string;
+  category: string;
+  series: string;
+  tags: string[];
+  date: string;
+  readTime: string;
+  views: number;
+  likes: number;
+  status: "draft" | "published";
+};
+
 const articleEditorConfig: MarkdownEditorConfig = {
   section: "文章发布",
   draftKey: "nextalex-admin-article-draft",
@@ -149,6 +174,7 @@ const emptyMarkdownDraft: MarkdownDraft = {
   tags: "",
   summary: "",
   date: new Date().toISOString().slice(0, 10),
+  readTime: "5 min",
   content: "",
 };
 
@@ -223,7 +249,7 @@ function AdminApp() {
 
       <section className="admin-workspace">
         {activeSection === "总览" && <Overview openSection={openSection} />}
-        {activeSection === "文章发布" && <MarkdownEditor key={activeSection} config={articleEditorConfig} back={() => openSection("总览")} />}
+        {activeSection === "文章发布" && <ArticleManager back={() => openSection("总览")} />}
         {activeSection === "笔记发布" && <MarkdownEditor key={activeSection} config={noteEditorConfig} back={() => openSection("总览")} />}
         {activeSection === "图库发布" && <GalleryManager back={() => openSection("总览")} />}
         {activeSection === "项目同步" && <ProjectSync back={() => openSection("总览")} />}
@@ -248,6 +274,20 @@ function MarkdownEditor({ config, back }: { config: MarkdownEditorConfig; back: 
   const [draft, setDraft] = useState<MarkdownDraft>(() => readObject(config.draftKey, emptyMarkdownDraft));
   const [editorMode, setEditorMode] = useState<EditorMode>("write");
   const [saveState, setSaveState] = useState("");
+  const [publishedNotes, setPublishedNotes] = useState<AdminNote[]>([]);
+
+  useEffect(() => {
+    if (config.section !== "笔记发布") return;
+    const controller = new AbortController();
+    fetch("/api/notes", { cache: "no-store", signal: controller.signal })
+      .then((response) => response.ok ? response.json() as Promise<AdminNote[]> : Promise.reject(new Error("note list failed")))
+      .then((notes) => setPublishedNotes(Array.isArray(notes) ? notes : []))
+      .catch((error: unknown) => {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        setSaveState("笔记列表加载失败");
+      });
+    return () => controller.abort();
+  }, [config.section]);
 
   function updateDraft<K extends keyof MarkdownDraft>(key: K, value: MarkdownDraft[K]) {
     setDraft({ ...draft, [key]: value });
@@ -293,6 +333,8 @@ function MarkdownEditor({ config, back }: { config: MarkdownEditorConfig; back: 
           body: JSON.stringify({ title: draft.title.trim(), date: draft.date, content: draft.content.trim() }),
         });
         if (!response.ok) throw new Error("Note publication failed");
+        const saved = await response.json() as AdminNote;
+        setPublishedNotes((current) => [saved, ...current.filter((note) => note.id !== saved.id)]);
         setSaveState("已发布");
       } catch {
         setSaveState("发布失败");
@@ -309,6 +351,17 @@ function MarkdownEditor({ config, back }: { config: MarkdownEditorConfig; back: 
     await persist("published");
   }
 
+  async function deleteNote(note: AdminNote) {
+    if (!window.confirm(`删除笔记“${note.title}”？`)) return;
+    try {
+      const response = await fetch(`/api/admin/notes/${note.id}`, { method: "DELETE" });
+      if (!response.ok) throw new Error("Note deletion failed");
+      setPublishedNotes((current) => current.filter((item) => item.id !== note.id));
+    } catch {
+      setSaveState("删除失败");
+    }
+  }
+
   return <section className="admin-editor-screen">
     <WorkspaceHeader title={config.section} back={back} />
     <form className="admin-article-editor" onSubmit={submit}>
@@ -323,6 +376,142 @@ function MarkdownEditor({ config, back }: { config: MarkdownEditorConfig; back: 
       {editorMode === "write" ? <textarea className="admin-markdown-source" aria-label="正文 Markdown" value={draft.content} onChange={(event) => updateDraft("content", event.target.value)} spellCheck={false} required /> : <article className="admin-markdown-preview markdown-content" aria-label="正文预览"><ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>{draft.content || "# "}</ReactMarkdown></article>}
       <EditorFooter saveState={saveState} saveDraft={() => { void persist("draft"); }} />
     </form>
+    {config.section === "笔记发布" && <section className="admin-note-list" aria-label="已发布笔记"><header><div><h2>已发布笔记</h2><span>{publishedNotes.length}</span></div></header>{publishedNotes.length === 0 ? <p className="admin-empty-state">暂无笔记</p> : <div>{publishedNotes.map((note) => <article key={note.id}><div><strong>{note.title}</strong><p>{note.date}</p><small>{note.content.replace(/\s+/g, " ").slice(0, 96)}</small></div><button className="admin-delete-button" type="button" aria-label={`删除${note.title}`} title="删除" onClick={() => { void deleteNote(note); }}><Trash2 size={16} aria-hidden="true" /></button></article>)}</div>}</section>}
+  </section>;
+}
+
+function ArticleManager({ back }: { back: () => void }) {
+  const newDraft = (): MarkdownDraft => ({ ...emptyMarkdownDraft, date: new Date().toISOString().slice(0, 10) });
+  const [records, setRecords] = useState<AdminArticle[]>([]);
+  const [draft, setDraft] = useState<MarkdownDraft>(newDraft);
+  const [editingID, setEditingID] = useState<number | null>(null);
+  const [editorMode, setEditorMode] = useState<EditorMode>("write");
+  const [saveState, setSaveState] = useState("");
+
+  useEffect(() => {
+    const controller = new AbortController();
+    fetch("/api/admin/articles", { cache: "no-store", signal: controller.signal })
+      .then((response) => response.ok ? response.json() as Promise<AdminArticle[]> : Promise.reject(new Error("article list failed")))
+      .then((articles) => setRecords(Array.isArray(articles) ? articles : []))
+      .catch((error: unknown) => {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        setSaveState("文章列表加载失败");
+      });
+    return () => controller.abort();
+  }, []);
+
+  function updateDraft<K extends keyof MarkdownDraft>(key: K, value: MarkdownDraft[K]) {
+    setDraft((current) => ({ ...current, [key]: value }));
+  }
+
+  function resetEditor() {
+    setDraft(newDraft());
+    setEditingID(null);
+    setEditorMode("write");
+    setSaveState("");
+  }
+
+  function editArticle(article: AdminArticle) {
+    setEditingID(article.id);
+    setDraft({
+      title: article.title,
+      category: article.category,
+      series: article.series,
+      tags: article.tags.join(", "),
+      summary: article.summary,
+      date: article.date.slice(0, 10),
+      readTime: article.readTime || "5 min",
+      content: article.content,
+    });
+    setEditorMode("write");
+    setSaveState("");
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  async function importMarkdown(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    if (!/\.(md|markdown)$/i.test(file.name)) {
+      setSaveState("请选择 Markdown 文件");
+      return;
+    }
+    try {
+      const imported = parseMarkdownImport(await file.text(), file.name, draft);
+      if (!imported.content.trim()) throw new Error("empty markdown");
+      setDraft(imported);
+      setEditorMode("write");
+      setSaveState(`已导入 ${file.name}`);
+    } catch {
+      setSaveState("Markdown 文件读取失败");
+    }
+  }
+
+  async function persist(status: "draft" | "published") {
+    if (!draft.title.trim() || !draft.category.trim() || !draft.content.trim()) {
+      setSaveState("请填写标题、分类和正文");
+      return;
+    }
+
+    const payload = {
+      title: draft.title.trim(),
+      category: draft.category.trim(),
+      series: draft.series.trim(),
+      tags: draft.tags.split(/[,，]/).map((tag) => tag.trim()).filter(Boolean),
+      summary: draft.summary.trim(),
+      date: draft.date,
+      readTime: draft.readTime.trim(),
+      content: draft.content.trim(),
+      status,
+    };
+    localStorage.setItem("nextalex-admin-article-draft", JSON.stringify(draft));
+    setSaveState(status === "published" ? "发布中" : "保存中");
+    try {
+      const endpoint = editingID === null ? "/api/admin/articles" : `/api/admin/articles/${editingID}`;
+      const response = await fetch(endpoint, {
+        method: editingID === null ? "POST" : "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (!response.ok) throw new Error("article save failed");
+      const saved = await response.json() as AdminArticle;
+      setRecords((current) => [saved, ...current.filter((article) => article.id !== saved.id)]);
+      setEditingID(saved.id);
+      setSaveState(status === "published" ? "已发布" : "已保存");
+    } catch {
+      setSaveState(status === "published" ? "发布失败" : "保存失败");
+    }
+  }
+
+  async function deleteArticle(article: AdminArticle) {
+    if (!window.confirm(`删除文章“${article.title}”？`)) return;
+    try {
+      const response = await fetch(`/api/admin/articles/${article.id}`, { method: "DELETE" });
+      if (!response.ok) throw new Error("article delete failed");
+      setRecords((current) => current.filter((item) => item.id !== article.id));
+      if (editingID === article.id) resetEditor();
+    } catch {
+      setSaveState("删除失败");
+    }
+  }
+
+  return <section className="admin-editor-screen">
+    <WorkspaceHeader title="文章发布" back={back} />
+    <form className="admin-article-editor" onSubmit={(event) => { event.preventDefault(); void persist("published"); }}>
+      <div className="admin-article-meta">
+        <label>标题<input value={draft.title} onChange={(event) => updateDraft("title", event.target.value)} required /></label>
+        <label>分类<input value={draft.category} onChange={(event) => updateDraft("category", event.target.value)} required /></label>
+        <label>专栏<input value={draft.series} onChange={(event) => updateDraft("series", event.target.value)} placeholder="例如：工程实践" /></label>
+        <label>标签<input value={draft.tags} onChange={(event) => updateDraft("tags", event.target.value)} placeholder="Java, 并发" /></label>
+        <label>发布日期<input type="date" value={draft.date} onChange={(event) => updateDraft("date", event.target.value)} required /></label>
+        <label>阅读时长<input value={draft.readTime} onChange={(event) => updateDraft("readTime", event.target.value)} placeholder="例如：5 min" /></label>
+      </div>
+      <label className="admin-summary-field">摘要<textarea value={draft.summary} onChange={(event) => updateDraft("summary", event.target.value)} rows={3} /></label>
+      <div className="admin-editor-toolbar" role="tablist" aria-label="正文模式"><button className={editorMode === "write" ? "active" : ""} type="button" role="tab" aria-selected={editorMode === "write"} onClick={() => setEditorMode("write")}>撰写</button><button className={editorMode === "preview" ? "active" : ""} type="button" role="tab" aria-selected={editorMode === "preview"} onClick={() => setEditorMode("preview")}><Eye size={16} aria-hidden="true" />预览</button><label className="admin-markdown-import"><Upload size={16} aria-hidden="true" />导入 Markdown<input type="file" accept=".md,.markdown,text/markdown" onChange={importMarkdown} /></label></div>
+      {editorMode === "write" ? <textarea className="admin-markdown-source" aria-label="正文 Markdown" value={draft.content} onChange={(event) => updateDraft("content", event.target.value)} spellCheck={false} required /> : <article className="admin-markdown-preview markdown-content" aria-label="正文预览"><ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>{draft.content || "# "}</ReactMarkdown></article>}
+      <EditorFooter saveState={saveState} saveDraft={() => { void persist("draft"); }} />
+    </form>
+    <section className="admin-article-list" aria-label="文章列表"><header><div><h2>已保存文章</h2><span>{records.length}</span></div><button className="admin-secondary-button" type="button" onClick={resetEditor}><Plus size={16} aria-hidden="true" />新建文章</button></header>{records.length === 0 ? <p className="admin-empty-state">暂无文章</p> : <div>{records.map((article) => <article key={article.id}><div><strong>{article.title}</strong><p>{article.category}{article.series ? ` · ${article.series}` : ""}</p><small>{article.status === "published" ? "已发布" : "草稿"} · {article.date} · {article.views} 浏览 · {article.likes} 点赞</small></div><div className="admin-article-record-actions"><button className="admin-secondary-button" type="button" onClick={() => editArticle(article)}>编辑</button><button className="admin-delete-button" type="button" aria-label={`删除${article.title}`} title="删除" onClick={() => { void deleteArticle(article); }}><Trash2 size={16} aria-hidden="true" /></button></div></article>)}</div>}</section>
   </section>;
 }
 
