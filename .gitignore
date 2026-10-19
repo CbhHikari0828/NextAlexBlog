@@ -1,4 +1,8 @@
 .env
+.env.*
+!.env.example
+!.env.production.example
+certs/
 
 # Frontend
 frontend/node_modules/

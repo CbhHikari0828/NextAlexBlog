@@ -3,19 +3,24 @@ import type { PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import { useGSAP } from "@gsap/react";
 import { gsap } from "gsap";
 import { ScrollTrigger } from "gsap/ScrollTrigger";
-import { ArrowUpRight, ChevronDown, ChevronLeft, ChevronRight, Code2, Eye, GitBranch, GitFork, Heart, Mail, Rss, Send, Star, Users, X } from "lucide-react";
+import { ArrowUpRight, ChevronDown, ChevronLeft, ChevronRight, CircleStop, Code2, Eye, GitBranch, GitFork, Heart, LoaderCircle, Mail, Rss, Send, Star, Users, X } from "lucide-react";
 import { motion, useMotionValue, useSpring, useTransform } from "motion/react";
+import { createPortal } from "react-dom";
 import ReactMarkdown from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
 import AdminApp from "./AdminApp";
 import HomeLittlePlanetScene from "./components/HomeLittlePlanetScene";
 import HomeXylophoneBackdrop from "./components/HomeXylophoneScene";
+import { ReplyIcon } from "./components/ReplyIcon";
+import type { ReplyIconHandle } from "./components/ReplyIcon";
 import TravelTraceMap from "./components/TravelTraceMap";
+import { ArticleAssistantError, limitArticleAssistantHistory, streamArticleAssistant } from "./articleAssistant";
+import type { ArticleAssistantHistoryItem, ArticleAssistantSource } from "./articleAssistant";
 
 gsap.registerPlugin(useGSAP, ScrollTrigger);
 
-type View = "home" | "articles" | "notes" | "gallery" | "studio" | "entertainment" | "guestbook";
+type View = "home" | "articles" | "assistant" | "notes" | "gallery" | "studio" | "entertainment" | "guestbook";
 type ApiState = "checking" | "online" | "offline";
 type ContributionState = "loading" | "ready" | "unavailable";
 
@@ -151,6 +156,36 @@ type ArticleHeading = {
   level: 1 | 2 | 3;
 };
 
+type AssistantMessage = ArticleAssistantHistoryItem & {
+  id: number;
+  sources: ArticleAssistantSource[];
+};
+
+type ArticleAssistantSourceGroup = {
+  articleId: number;
+  title: string;
+  sources: ArticleAssistantSource[];
+};
+
+function groupArticleAssistantSources(sources: ArticleAssistantSource[]) {
+  const groups = new Map<number, ArticleAssistantSourceGroup>();
+
+  sources.forEach((source) => {
+    const existing = groups.get(source.articleId);
+    if (existing) {
+      existing.sources.push(source);
+      return;
+    }
+    groups.set(source.articleId, { articleId: source.articleId, title: source.title, sources: [source] });
+  });
+
+  return Array.from(groups.values());
+}
+
+function formatArticleAssistantSourceIDs(sources: ArticleAssistantSource[]) {
+  return Array.from(new Set(sources.map((source) => source.id.trim()).filter(Boolean))).map((id) => `[${id}]`).join("、");
+}
+
 type Creation = {
   title: string;
   type: string;
@@ -192,7 +227,7 @@ const steamGameColors = ["#e11d48", "#f472b6", "#fb923c", "#facc15", "#84cc16", 
 type NoteColor = typeof noteColors[number];
 const articlesPerPage = 5;
 
-const homeStoryCards: { view: Exclude<View, "home">; step: string; label: string; title: string; body: string }[] = [
+const homeStoryCards: { view: Exclude<View, "home" | "assistant">; step: string; label: string; title: string; body: string }[] = [
   { view: "articles", step: "01", label: "/articles", title: "技术文章", body: "沉淀 Java 并发、后端工程和项目复盘。" },
   { view: "notes", step: "02", label: "/notes", title: "日常笔记", body: "记录阅读、灵感和阶段性的学习碎片。" },
   { view: "gallery", step: "03", label: "/gallery", title: "创作图库", body: "整理 AI 图片作品、模型和完整提示词。" },
@@ -201,7 +236,7 @@ const homeStoryCards: { view: Exclude<View, "home">; step: string; label: string
   { view: "guestbook", step: "06", label: "/guestbook", title: "留言板", body: "给访客留下简短反馈和交流入口。" },
 ];
 
-const homeStoryLogoLabels: Record<Exclude<View, "home">, string> = {
+const homeStoryLogoLabels: Record<Exclude<View, "home" | "assistant">, string> = {
   articles: "Tech",
   notes: "Note",
   gallery: "Art",
@@ -652,7 +687,7 @@ function resolveArticleRouteValue(rawValue: string | null | undefined, options: 
 
 function viewFromPath(pathname: string): View {
   const segment = pathname.split("/").filter(Boolean)[0] || "";
-  if (segment === "articles" || segment === "notes" || segment === "gallery" || segment === "studio" || segment === "entertainment" || segment === "guestbook") {
+  if (segment === "articles" || segment === "assistant" || segment === "notes" || segment === "gallery" || segment === "studio" || segment === "entertainment" || segment === "guestbook") {
     return segment;
   }
   return "home";
@@ -687,11 +722,14 @@ function formatArticleDate(value: string) {
 function readPublicRoute(availableArticles: Article[] = []): PublicRoute {
   const pathname = window.location.pathname.replace(/\/+$/, "") || "/";
   const view = viewFromPath(pathname);
+  const params = new URLSearchParams(window.location.search);
+  if (view === "assistant") {
+    return { view, category: allArticlesLabel, series: "", page: 1 };
+  }
   if (view !== "articles") return { view, category: allArticlesLabel, series: "", page: 1 };
 
   const { articleCategories, articleSeries, articleSeriesByCategory, categories } = getArticleTaxonomy(availableArticles);
   const segments = pathname.split("/").filter(Boolean);
-  const params = new URLSearchParams(window.location.search);
   const rawCategory = params.get("category") || segments[1] || "";
   const rawSeries = params.get("series") || segments[2] || "";
   const category = resolveArticleRouteValue(rawCategory, categories) || allArticlesLabel;
@@ -1253,7 +1291,6 @@ function PublicApp() {
   );
   const availableArticleSeries = activeCategory === allArticlesLabel ? [] : (articleTaxonomy.articleSeriesByCategory[activeCategory] || []);
   const popularArticles = useMemo(() => [...publishedArticles].sort((left, right) => right.views - left.views).slice(0, 5), [publishedArticles]);
-
   function updateArticleUrl(category: string, series: string, page: number, replace = false) {
     const targetPath = buildPublicPath("articles", category, series, page);
     const currentPath = window.location.pathname + window.location.search;
@@ -1310,6 +1347,11 @@ function PublicApp() {
     localStorage.setItem(articleLikeStorageKey(article.id), String(Date.now()));
     applyArticleEngagement(article.id, engagement);
     return true;
+  }
+
+  function openReferencedArticle(articleID: number) {
+    const referencedArticle = publishedArticles.find((article) => article.id === articleID);
+    if (referencedArticle) openArticle(referencedArticle);
   }
 
   function openCreation(creation: Creation) {
@@ -1369,6 +1411,7 @@ function PublicApp() {
   const viewTitle: Record<View, string> = {
     home: "个人技术与创作档案",
     articles: "技术文章",
+    assistant: "智能助手",
     notes: "日常笔记",
     gallery: "AI 创作图库",
     studio: "AI 编程项目",
@@ -1377,7 +1420,7 @@ function PublicApp() {
   };
 
   return (
-    <main className={`app-shell${view === "home" ? " home-shell" : ""}${view === "articles" ? " articles-shell" : ""}${view === "notes" ? " notes-shell" : ""}${view === "gallery" ? " gallery-shell" : ""}${view === "studio" ? " studio-shell" : ""}${view === "entertainment" ? " entertainment-shell" : ""}${view === "guestbook" ? " guestbook-shell" : ""}`}>
+    <main className={`app-shell${view === "home" ? " home-shell" : ""}${view === "articles" ? " articles-shell" : ""}${view === "assistant" ? " assistant-shell" : ""}${view === "notes" ? " notes-shell" : ""}${view === "gallery" ? " gallery-shell" : ""}${view === "studio" ? " studio-shell" : ""}${view === "entertainment" ? " entertainment-shell" : ""}${view === "guestbook" ? " guestbook-shell" : ""}`}>
       <GlobalCursor view={view} />
       {(copyNoticeVisible || developerToolsOpen) && <div className="developer-tools-notice" role="status">{copyNoticeVisible ? "复制已完成，转载请标明出处" : "开发者模式已打开，请遵循 GPL 协议"}</div>}
       <header className="site-header">
@@ -1412,15 +1455,16 @@ function PublicApp() {
       </header>
 
       <PageStage view={view} key={`${view}-${viewSequence}`}>
-        {view !== "home" && view !== "guestbook" && view !== "articles" && view !== "notes" && view !== "gallery" && view !== "studio" && view !== "entertainment" && <section className="page-intro">
+        {view !== "home" && view !== "guestbook" && view !== "articles" && view !== "assistant" && view !== "notes" && view !== "gallery" && view !== "studio" && view !== "entertainment" && <section className="page-intro">
           <h1>{viewTitle[view]}</h1>
           <p className="intro-copy">汇集 Java 技术文章、阅读笔记、AI 图像作品和 AI 编程项目。</p>
         </section>}
 
         {view === "home" && <Home navigate={navigate} articles={publishedArticles} setSelectedArticle={openArticle} repositories={githubRepositories} repositoryState={repositoryState} />}
         {view === "articles" && (
-          <Articles activeCategory={activeCategory} activeSeries={activeSeries} availableSeries={availableArticleSeries} categories={articleTaxonomy.categories} popularArticles={popularArticles} setActiveCategory={selectArticleCategory} setActiveSeries={selectArticleSeries} paginatedArticles={paginatedArticles} articlePage={visibleArticlePage} articlePageCount={articlePageCount} setArticlePage={selectArticlePage} setSelectedArticle={openArticle} />
+          <Articles activeCategory={activeCategory} activeSeries={activeSeries} availableSeries={availableArticleSeries} categories={articleTaxonomy.categories} popularArticles={popularArticles} setActiveCategory={selectArticleCategory} setActiveSeries={selectArticleSeries} paginatedArticles={paginatedArticles} articlePage={visibleArticlePage} articlePageCount={articlePageCount} setArticlePage={selectArticlePage} setSelectedArticle={openArticle} navigate={navigate} />
         )}
+        {view === "assistant" && <ArticleAssistantPage openSource={(source) => openReferencedArticle(source.articleId)} returnToArticles={() => navigate("articles")} />}
         {view === "notes" && <Notes notes={publishedNotes} setSelectedNote={openNote} />}
         {view === "gallery" && <Gallery creations={publishedCreations} setSelectedCreation={openCreation} />}
         {view === "studio" && <Studio contributions={githubContributions} contributionState={contributionState} repositories={githubRepositories} repositoryState={repositoryState} profile={githubProfile} profileState={profileState} />}
@@ -1433,7 +1477,7 @@ function PublicApp() {
       {selectedNote && <NoteDialog note={selectedNote} close={() => setSelectedNote((current) => current === selectedNote ? null : current)} key={selectedNote.title} />}
 
       <footer className={`site-footer${view === "notes" ? " notes-footer" : ""}`}>
-        {view === "notes" ? <><span>© {new Date().getFullYear()} Cameron / Works. All rights reserved.</span><span>React · Gin · PostgreSQL</span></> : <><div className="footer-primary"><strong>Cameron</strong><span>© {new Date().getFullYear()} Cameron. All rights reserved.</span></div><div className="footer-meta"><span>Version 0.1.0</span><span>React · Gin · PostgreSQL</span></div><div className="footer-compliance"><span>ICP备案信息待配置</span><span>公安网备信息待配置</span></div></>}
+        {view === "notes" ? <><span>© {new Date().getFullYear()} Cameron / Works. All rights reserved.</span><span>React · Web API · PostgreSQL</span></> : <><div className="footer-primary"><strong>Cameron</strong><span>© {new Date().getFullYear()} Cameron. All rights reserved.</span></div><div className="footer-meta"><span>Version 0.1.0</span><span>React · Web API · PostgreSQL</span></div><div className="footer-compliance"><span>ICP备案信息待配置</span><span>公安网备信息待配置</span></div></>}
       </footer>
     </main>
   );
@@ -1851,7 +1895,7 @@ function HomeQuickFolder({ navigate }: { navigate: (view: View) => void }) {
   );
 }
 
-function Articles({ activeCategory, activeSeries, availableSeries, categories, popularArticles, setActiveCategory, setActiveSeries, paginatedArticles, articlePage, articlePageCount, setArticlePage, setSelectedArticle }: { activeCategory: string; activeSeries: string; availableSeries: string[]; categories: string[]; popularArticles: Article[]; setActiveCategory: (category: string) => void; setActiveSeries: (series: string) => void; paginatedArticles: Article[]; articlePage: number; articlePageCount: number; setArticlePage: (page: number) => void; setSelectedArticle: (article: Article) => void }) {
+function Articles({ activeCategory, activeSeries, availableSeries, categories, popularArticles, setActiveCategory, setActiveSeries, paginatedArticles, articlePage, articlePageCount, setArticlePage, setSelectedArticle, navigate }: { activeCategory: string; activeSeries: string; availableSeries: string[]; categories: string[]; popularArticles: Article[]; setActiveCategory: (category: string) => void; setActiveSeries: (series: string) => void; paginatedArticles: Article[]; articlePage: number; articlePageCount: number; setArticlePage: (page: number) => void; setSelectedArticle: (article: Article) => void; navigate: (view: View) => void }) {
   const articleRef = useRef<HTMLElement>(null);
 
   useGSAP(() => {
@@ -1901,6 +1945,10 @@ function Articles({ activeCategory, activeSeries, availableSeries, categories, p
         </div>}
       </section>
       <section className="popular-articles"><h2>热门文章</h2><div>{popularArticles.map((article) => <button key={article.id} onClick={() => setSelectedArticle(article)}><span aria-hidden="true">→</span>{article.title}</button>)}</div></section>
+      <button className="article-assistant-launch" type="button" onClick={() => navigate("assistant")}>
+        <img className="article-assistant-launch-icon" src="/infinity.svg" alt="" aria-hidden="true" />
+        <span className="article-assistant-launch-label">AI 助手</span>
+      </button>
     </aside>
   </section>;
 }
@@ -2377,7 +2425,31 @@ function Guestbook({ visitor, message, setVisitor, setMessage, comments, submitM
   return <><div className="guestbook-grid-wrapper" aria-hidden="true"><div className="guestbook-grid-background" /></div><section className="guestbook-wall"><div className="guestbook-canvas"><div className="note-board" aria-live="polite" style={{ "--note-board-height": `${boardHeight}px` } as React.CSSProperties}>{visibleComments.length > 0 ? visibleComments.map((comment, index) => { const layout = getNoteLayout(index); return <article className={`visitor-note visitor-note-${comment.color}`} key={`${comment.name}-${index}`} style={{ "--note-x": layout.x, "--note-y": layout.y, "--note-tilt": `${layout.tilt}deg`, "--note-z": layout.z, "--note-delay": `${index * 55}ms` } as React.CSSProperties}><p className="visitor-note-title">{comment.name}</p><p className="visitor-note-description">{comment.body}</p><time className="visitor-note-date">{comment.date}</time><div className="visitor-note-corner" aria-hidden="true"><span>→</span></div></article>; }) : <p className="guestbook-empty-state">暂无留言</p>}</div><section className="guestbook-editor"><form className="guestbook-submit-form" onSubmit={(event) => submitMessage(event, selectedColor)}><div className="guestbook-submit-heading"><p>发布留言</p><span>{message.length}/160</span></div><div className="guestbook-submit-name"><input aria-label="昵称" value={visitor} onChange={(event) => setVisitor(event.target.value)} placeholder="昵称" maxLength={20} required /></div><div className="guestbook-submit-message"><textarea aria-label="留言内容" value={message} onChange={(event) => setMessage(event.target.value)} placeholder="留言内容" maxLength={160} rows={4} required /></div><div className="guestbook-submit-footer"><div className="guestbook-submit-colors" aria-label="便签颜色">{noteColors.map((color) => <button key={color} type="button" className={`guestbook-submit-color guestbook-submit-color-${color}${selectedColor === color ? " selected" : ""}`} onClick={() => setSelectedColor(color)} aria-label={`选择${color}颜色`} />)}</div><button type="submit">提交留言</button></div><div className="guestbook-submit-background" aria-hidden="true" /><div className="guestbook-submit-white-filter" aria-hidden="true" /></form></section></div></section></>;
 }
 
-function ArticleReader({ article, likeArticle, close }: { article: Article; likeArticle: (article: Article) => Promise<boolean>; close: () => void }) {
+function ArticleAssistantPage({ openSource, returnToArticles }: {
+  openSource: (source: ArticleAssistantSource) => void;
+  returnToArticles: () => void;
+}) {
+  const replyIconRef = useRef<ReplyIconHandle>(null);
+
+  return (
+    <section className="assistant-page" aria-label="文章助手">
+      <header className="assistant-page-header">
+        <button className="assistant-back-button" type="button" onClick={returnToArticles} onMouseEnter={() => replyIconRef.current?.startAnimation()} onMouseLeave={() => replyIconRef.current?.stopAnimation()}>
+          <ReplyIcon className="assistant-back-icon" ref={replyIconRef} size={19} aria-hidden="true" />
+          <span>返回文章</span>
+        </button>
+      </header>
+
+      <ArticleAssistant openSource={openSource} />
+    </section>
+  );
+}
+
+function ArticleReader({ article, likeArticle, close }: {
+  article: Article;
+  likeArticle: (article: Article) => Promise<boolean>;
+  close: () => void;
+}) {
   const readerRef = useRef<HTMLElement>(null);
   const contentRef = useRef<HTMLElement>(null);
   const outlineRef = useRef<HTMLElement>(null);
@@ -2546,6 +2618,228 @@ function ArticleReader({ article, likeArticle, close }: { article: Article; like
     </section>
   );
 }
+
+function ArticleAssistant({ openSource }: {
+  openSource: (source: ArticleAssistantSource) => void;
+}) {
+  const panelRef = useRef<HTMLElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const messageListRef = useRef<HTMLDivElement>(null);
+  const abortRef = useRef<AbortController | null>(null);
+  const activeResponseIDRef = useRef<number | null>(null);
+  const messageIDRef = useRef(0);
+  const mountedRef = useRef(true);
+  const [messages, setMessages] = useState<AssistantMessage[]>([]);
+  const [draft, setDraft] = useState("");
+  const [streaming, setStreaming] = useState(false);
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+
+  useEffect(() => {
+    mountedRef.current = true;
+    const focusFrame = window.requestAnimationFrame(() => inputRef.current?.focus({ preventScroll: true }));
+    return () => {
+      mountedRef.current = false;
+      abortRef.current?.abort();
+      window.cancelAnimationFrame(focusFrame);
+    };
+  }, []);
+
+  useEffect(() => {
+    const messageList = messageListRef.current;
+    if (messageList) messageList.scrollTop = messageList.scrollHeight;
+  }, [messages]);
+
+  useLayoutEffect(() => {
+    const input = inputRef.current;
+    if (!input) return;
+
+    const minimumHeight = 34;
+    const maximumHeight = 216;
+    input.style.height = "0px";
+    input.style.height = `${Math.max(minimumHeight, Math.min(input.scrollHeight, maximumHeight))}px`;
+    input.style.overflowY = input.scrollHeight > maximumHeight ? "auto" : "hidden";
+  }, [draft]);
+
+  const updateAssistantMessage = useCallback((id: number, update: (message: AssistantMessage) => AssistantMessage) => {
+    if (!mountedRef.current) return;
+    setMessages((current) => current.map((message) => message.id === id ? update(message) : message));
+  }, []);
+
+  const submitQuestion = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const question = draft.trim();
+    if (!question || streaming) return;
+
+    const history = limitArticleAssistantHistory(messages
+      .filter((message) => message.content.trim())
+      .map(({ role, content }) => ({ role, content })));
+    const userMessage: AssistantMessage = { id: ++messageIDRef.current, role: "user", content: question, sources: [] };
+    const responseID = ++messageIDRef.current;
+    const assistantMessage: AssistantMessage = { id: responseID, role: "assistant", content: "", sources: [] };
+    const controller = new AbortController();
+    let receivedContent = false;
+
+    activeResponseIDRef.current = responseID;
+    abortRef.current = controller;
+    setMessages((current) => [...current, userMessage, assistantMessage]);
+    setDraft("");
+    setError("");
+    setNotice("");
+    setStreaming(true);
+
+    try {
+      const responseIsActive = () => mountedRef.current
+        && activeResponseIDRef.current === responseID
+        && abortRef.current === controller;
+
+      await streamArticleAssistant({
+        message: question,
+        history,
+        signal: controller.signal,
+        onSources: (sources) => {
+          if (!responseIsActive()) return;
+          updateAssistantMessage(responseID, (message) => ({ ...message, sources }));
+        },
+        onDelta: (content) => {
+          if (!responseIsActive()) return;
+          receivedContent = receivedContent || Boolean(content.trim());
+          updateAssistantMessage(responseID, (message) => ({ ...message, content: message.content + content }));
+        },
+        onDone: (sources) => {
+          if (!responseIsActive()) return;
+          if (sources.length > 0) updateAssistantMessage(responseID, (message) => ({ ...message, sources }));
+        },
+      });
+    } catch (requestError) {
+      if (requestError instanceof Error && requestError.name === "AbortError") return;
+      if (!mountedRef.current) return;
+      if (!receivedContent) setMessages((current) => current.filter((message) => message.id !== responseID && message.id !== userMessage.id));
+      setError(requestError instanceof ArticleAssistantError ? requestError.message : "智能助手暂时不可用，请稍后重试");
+      if (!receivedContent) setDraft(question);
+      window.requestAnimationFrame(() => inputRef.current?.focus({ preventScroll: true }));
+    } finally {
+      if (mountedRef.current && abortRef.current === controller) {
+        abortRef.current = null;
+        activeResponseIDRef.current = null;
+        setStreaming(false);
+      }
+    }
+  };
+
+  const stopResponse = () => {
+    const controller = abortRef.current;
+    const responseID = activeResponseIDRef.current;
+    abortRef.current = null;
+    activeResponseIDRef.current = null;
+    controller?.abort();
+    setStreaming(false);
+    setNotice("已停止生成");
+    if (responseID !== null) {
+      setMessages((current) => {
+        const response = current.find((message) => message.id === responseID);
+        if (response?.content.trim()) return current;
+        return current.filter((message) => message.id !== responseID && message.id !== responseID - 1);
+      });
+    }
+    window.requestAnimationFrame(() => inputRef.current?.focus({ preventScroll: true }));
+  };
+
+  const hasConversation = messages.length > 0 || Boolean(error) || Boolean(notice);
+
+  return (
+    <section className={`article-assistant-panel article-assistant-page-panel${hasConversation ? " has-conversation" : " is-empty"}`} aria-label="文章助手" ref={panelRef}>
+      <div className="article-assistant-workspace">
+        <div className="article-assistant-messages" role="log" aria-live="polite" aria-busy={streaming} tabIndex={-1} ref={messageListRef}>
+          {messages.map((message) => {
+            const sourceGroups = groupArticleAssistantSources(message.sources);
+            const primarySourceGroup = sourceGroups[0];
+            const additionalSourceGroups = sourceGroups.slice(1);
+            const hasAnswerText = Boolean(message.content.trim());
+
+            return (
+              <article className={`article-assistant-message is-${message.role}`} key={message.id} aria-label={message.role === "user" ? "你的问题" : "助手回答"}>
+                {message.role === "assistant" && !message.content && streaming && activeResponseIDRef.current === message.id
+                  ? <div className="article-assistant-thinking" role="status"><LoaderCircle size={16} aria-hidden="true" />正在检索文章</div>
+                  : <>
+                    {primarySourceGroup && hasAnswerText && (
+                      <section className="article-assistant-answer-intro" aria-label="推荐文章">
+                        <p>这个问题可在 <button type="button" onClick={() => openSource(primarySourceGroup.sources[0])} aria-label={`打开文章《${primarySourceGroup.title}》`}>《{primarySourceGroup.title}》</button> 中得到更完整解释，点击链接跳转。</p>
+                        <p className="article-assistant-answer-citations">引用片段：<span>{formatArticleAssistantSourceIDs(primarySourceGroup.sources)}</span></p>
+                        <p><strong>下面是具体讲解：</strong></p>
+                      </section>
+                    )}
+                    <div className="article-assistant-answer"><ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>{message.content}</ReactMarkdown></div>
+                  </>}
+                {message.role === "assistant" && hasAnswerText && additionalSourceGroups.length > 0 && (
+                  <details
+                    className="article-assistant-sources"
+                    aria-label="其他参考文章"
+                    onToggle={(event) => {
+                      if (!event.currentTarget.open) return;
+                      window.requestAnimationFrame(() => {
+                        const messageList = messageListRef.current;
+                        if (messageList) messageList.scrollTop = messageList.scrollHeight;
+                      });
+                    }}
+                  >
+                    <summary>
+                      <span>其他参考文章</span>
+                      <span className="article-assistant-sources-count">{additionalSourceGroups.length}</span>
+                      <ChevronDown size={16} aria-hidden="true" />
+                    </summary>
+                    <div className="article-assistant-sources-list">
+                      {additionalSourceGroups.map((sourceGroup) => {
+                        const targetSource = sourceGroup.sources[0];
+                        const excerpt = sourceGroup.sources.find((source) => source.excerpt)?.excerpt;
+                        const sourceIDs = formatArticleAssistantSourceIDs(sourceGroup.sources);
+
+                        return (
+                          <button key={sourceGroup.articleId} type="button" onClick={() => openSource(targetSource)} aria-label={`打开文章《${sourceGroup.title}》，引用 ${sourceIDs}`}>
+                            <span>{sourceIDs}</span>
+                            <div><strong>{sourceGroup.title}</strong>{excerpt && <p>{excerpt}</p>}</div>
+                            <ArrowUpRight size={15} aria-hidden="true" />
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </details>
+                )}
+              </article>
+            );
+          })}
+          {error && <p className="article-assistant-error" role="alert">{error}</p>}
+          {notice && <p className="article-assistant-notice" role="status">{notice}</p>}
+        </div>
+
+        <form className="article-assistant-composer" onSubmit={(event) => { void submitQuestion(event); }}>
+          <textarea
+            ref={inputRef}
+            aria-label="向文章智能助手提问"
+            placeholder="输入问题"
+            value={draft}
+            maxLength={1000}
+            rows={1}
+            disabled={streaming}
+            onChange={(event) => setDraft(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+                event.preventDefault();
+                event.currentTarget.form?.requestSubmit();
+              }
+            }}
+          />
+          <div>
+            {streaming
+              ? <button aria-label="停止" className="article-assistant-stop" title="停止生成" type="button" onClick={stopResponse}><CircleStop size={16} aria-hidden="true" /></button>
+              : <button aria-label="发送" className="article-assistant-send" title="发送问题" type="submit" disabled={!draft.trim()}><Send size={16} aria-hidden="true" /></button>}
+          </div>
+        </form>
+      </div>
+    </section>
+  );
+}
+
 function CreationDrawer({ creation, close }: { creation: Creation; close: () => void }) {
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const [closing, requestClose] = useAnimatedDismiss(close, 180);
@@ -2557,7 +2851,10 @@ function CreationDrawer({ creation, close }: { creation: Creation; close: () => 
     const restoreSiblings = backdrop ? hideModalSiblings(backdrop) : () => undefined;
     const focusFrame = window.requestAnimationFrame(() => closeButtonRef.current?.focus({ preventScroll: true }));
     const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") requestClose();
+      if (event.key === "Escape") {
+        event.stopPropagation();
+        requestClose();
+      }
     };
     const keepFocusInside = (event: KeyboardEvent) => {
       if (backdrop) trapModalFocus(event, backdrop);
@@ -2576,7 +2873,7 @@ function CreationDrawer({ creation, close }: { creation: Creation; close: () => 
     };
   }, [requestClose]);
 
-  return (
+  return createPortal(
     <div className={`drawer-backdrop${closing ? " is-closing" : ""}`} onClick={requestClose}>
       <article className="drawer creation-drawer" aria-label={creation.title} aria-modal="true" role="dialog" onClick={(event) => event.stopPropagation()}>
         <button className="close-button" onClick={requestClose} aria-label="关闭" ref={closeButtonRef}>×</button>
@@ -2585,7 +2882,8 @@ function CreationDrawer({ creation, close }: { creation: Creation; close: () => 
         <h2>{creation.title}</h2>
         <dl className="creation-prompt"><div><dt>模型</dt><dd>{creation.model}</dd></div><div><dt>完整提示词</dt><dd>{creation.prompt}</dd></div></dl>
       </article>
-    </div>
+    </div>,
+    document.body,
   );
 }
 

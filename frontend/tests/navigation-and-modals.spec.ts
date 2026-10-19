@@ -1,6 +1,12 @@
 import { expect, test } from "@playwright/test";
 
 test.describe("页面切换和弹窗交互", () => {
+  test.beforeEach(async ({ page }) => {
+    await page.route("**/api/admin/session", async (route) => {
+      await route.fulfill({ contentType: "application/json", body: JSON.stringify({ authenticated: true, username: "alexlee" }) });
+    });
+  });
+
   test("管理员端按需打开文章编辑器并支持 Markdown 预览", async ({ page }) => {
     await page.goto("/admin");
 
@@ -125,7 +131,7 @@ test.describe("页面切换和弹窗交互", () => {
     await page.goto("/admin");
 
     const navigation = page.locator(".admin-nav");
-    await expect(navigation.getByRole("button")).toHaveCount(8);
+    await expect(navigation.getByRole("button")).toHaveCount(9);
     await expect(navigation.getByRole("button", { name: "Steam 同步" })).toHaveCount(1);
     await expect(navigation.getByRole("button", { name: "音乐管理" })).toHaveCount(1);
     await expect(navigation.getByRole("button", { name: "媒体管理" })).toHaveCount(0);
@@ -348,7 +354,7 @@ test.describe("页面切换和弹窗交互", () => {
       await route.fulfill({ contentType: "application/json", body: JSON.stringify([{
         id: 1,
         title: "测试作品",
-        image: "https://oss.example.com/gallery/test.png",
+        image: "/home-wavy-background.jpg",
         model: "测试模型",
         prompt: "测试提示词",
         createdAt: "2026-08-19T00:00:00Z",
@@ -358,14 +364,45 @@ test.describe("页面切换和弹窗交互", () => {
 
     await page.locator(".main-nav").getByRole("tab", { name: "创作图库", exact: true }).click();
     const creationTrigger = page.locator(".gallery-card-image").first();
+    await expect.poll(() => creationTrigger.evaluate((image: HTMLImageElement) => image.naturalWidth)).toBeGreaterThan(0);
     await creationTrigger.click();
     const detailTrigger = page.locator(".gallery-card-content button").first();
     await detailTrigger.click();
 
     const backdrop = page.locator(".drawer-backdrop");
+    const drawer = page.locator(".creation-drawer");
     const closeButton = page.locator(".close-button");
     await expect(backdrop).toBeVisible();
+    await expect(drawer).toBeVisible();
     await expect(closeButton).toBeFocused();
+    expect(await backdrop.evaluate((element) => element.parentElement === document.body)).toBe(true);
+
+    const drawerIsAbovePreview = await page.evaluate(() => {
+      const drawerElement = document.querySelector<HTMLElement>(".creation-drawer");
+      const previewElement = document.querySelector<HTMLElement>(".layout-grid-selected");
+      if (!drawerElement || !previewElement) return false;
+
+      const drawerBounds = drawerElement.getBoundingClientRect();
+      const previewBounds = previewElement.getBoundingClientRect();
+      const left = Math.max(drawerBounds.left, previewBounds.left);
+      const right = Math.min(drawerBounds.right, previewBounds.right);
+      const top = Math.max(drawerBounds.top, previewBounds.top);
+      const bottom = Math.min(drawerBounds.bottom, previewBounds.bottom);
+      if (right <= left || bottom <= top) return false;
+
+      const inertAncestors = Array.from(document.querySelectorAll<HTMLElement>("[inert]"));
+      const previousInert = inertAncestors.map((element) => ({ element, inert: element.inert }));
+      previousInert.forEach(({ element }) => { element.inert = false; });
+      try {
+        const elements = document.elementsFromPoint((left + right) / 2, (top + bottom) / 2);
+        const drawerIndex = elements.findIndex((element) => drawerElement.contains(element));
+        const previewIndex = elements.findIndex((element) => previewElement.contains(element));
+        return drawerIndex >= 0 && previewIndex >= 0 && drawerIndex < previewIndex;
+      } finally {
+        previousInert.forEach(({ element, inert }) => { element.inert = inert; });
+      }
+    });
+    expect(drawerIsAbovePreview).toBe(true);
 
     await page.keyboard.press("Tab");
     await expect(closeButton).toBeFocused();
