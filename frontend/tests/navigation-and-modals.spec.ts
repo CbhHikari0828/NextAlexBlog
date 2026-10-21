@@ -325,19 +325,66 @@ test.describe("页面切换和弹窗交互", () => {
   });
 
   test("文章阅读器循环焦点并在 Escape 后还原触发按钮", async ({ page }) => {
-    await page.goto("/");
+    const article = {
+      id: 98,
+      slug: "reader-focus",
+      title: "文章阅读器焦点测试",
+      category: "工程实践",
+      series: "交互细节",
+      tags: ["可访问性"],
+      date: "2026-10-20",
+      readTime: "5 min",
+      views: 0,
+      likes: 0,
+      summary: "用于验证文章阅读器焦点和导览交互。",
+      content: "## 焦点管理\n\n阅读器打开后应将焦点放到返回按钮。\n\n```ts\nconst value = 1;\n```\n\n## 章节导览\n\n右侧导览应可通过鼠标和键盘操作。",
+    };
+    await page.route("**/api/articles", async (route) => {
+      await route.fulfill({ contentType: "application/json", body: JSON.stringify([article]) });
+    });
+    await page.route("**/api/articles/98/view", async (route) => {
+      await route.fulfill({ contentType: "application/json", body: JSON.stringify({ views: 1, likes: 0 }) });
+    });
+    await page.goto("/articles");
 
-    const articleTrigger = page.locator(".recent-article").first();
+    const articleTrigger = page.locator(".article-feed-item").first();
     await articleTrigger.click();
 
     const reader = page.locator(".article-reader");
     const backButton = page.locator(".article-reader-back");
     const outlineToggle = page.locator(".article-outline-toggle");
+    const outlinePanel = page.locator(".article-outline-panel");
     await expect(reader).toBeVisible();
     await expect(backButton).toBeFocused();
     await expect(outlineToggle).toBeVisible();
+    await expect(outlineToggle).toHaveAttribute("title", "展开文章导览");
     await expect(reader.locator("pre code.hljs").first()).toBeVisible();
     await expect(reader.locator("pre code .hljs-keyword").first()).toBeVisible();
+
+    await outlineToggle.hover();
+    await expect(outlineToggle).toHaveAttribute("aria-expanded", "false");
+    await expect(outlinePanel).toBeVisible();
+    await expect(outlinePanel).toHaveAttribute("aria-hidden", "false");
+    const outlineVisuals = await outlinePanel.evaluate((element) => {
+      const style = getComputedStyle(element);
+      return {
+        borderRadius: Number.parseFloat(style.borderRadius),
+        backdropFilter: style.backdropFilter,
+        backgroundColor: style.backgroundColor,
+      };
+    });
+    expect(outlineVisuals.borderRadius).toBeGreaterThan(0);
+    expect(outlineVisuals.backdropFilter).toContain("blur(");
+    expect(outlineVisuals.backgroundColor).toMatch(/^rgba\(/);
+    const activeOutlineLink = outlinePanel.locator(".article-outline-link.active");
+    await expect(activeOutlineLink).toHaveCount(1);
+    await expect(activeOutlineLink).toHaveCSS("box-shadow", "none");
+    await expect(outlinePanel).toContainText("焦点管理");
+    await expect(outlinePanel).toContainText("章节导览");
+    await outlinePanel.hover();
+    await expect(outlinePanel).toBeVisible();
+    await reader.locator(".article-reader-intro h1").hover();
+    await expect(outlinePanel).not.toBeVisible();
 
     await page.keyboard.press("Shift+Tab");
     await expect(outlineToggle).toBeFocused();
@@ -347,6 +394,53 @@ test.describe("页面切换和弹窗交互", () => {
     await page.keyboard.press("Escape");
     await expect(reader).toHaveCount(0);
     await expect(articleTrigger).toBeFocused();
+  });
+
+  test("文章导览在阅读器滚动时持续固定在视口右侧", async ({ page }) => {
+    const article = {
+      id: 99,
+      slug: "fixed-outline",
+      title: "固定文章导览测试",
+      category: "工程实践",
+      series: "阅读体验",
+      tags: ["导航"],
+      date: "2026-10-20",
+      readTime: "12 min",
+      views: 0,
+      likes: 0,
+      summary: "用于验证滚动时文章导览仍留在视口右侧。",
+      content: Array.from({ length: 12 }, (_, index) => `## 第 ${index + 1} 节\n\n${"这一段正文用于制造足够的阅读器滚动高度。".repeat(28)}`).join("\n\n"),
+    };
+
+    await page.route("**/api/articles", async (route) => {
+      await route.fulfill({ contentType: "application/json", body: JSON.stringify([article]) });
+    });
+    await page.route("**/api/articles/99/view", async (route) => {
+      await route.fulfill({ contentType: "application/json", body: JSON.stringify({ views: 1, likes: 0 }) });
+    });
+
+    for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 }]) {
+      await page.setViewportSize(viewport);
+      await page.goto("/articles");
+      await page.locator(".article-feed-item").filter({ hasText: article.title }).click();
+
+      const reader = page.locator(".article-reader");
+      const outline = page.locator(".article-outline");
+      await expect(reader).toBeVisible();
+      await expect(outline).toBeInViewport();
+      await expect.poll(() => reader.evaluate((element) => getComputedStyle(element).transform)).toBe("none");
+      await expect.poll(() => reader.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true);
+
+      const before = await outline.boundingBox();
+      expect(before).not.toBeNull();
+      await reader.evaluate((element) => { element.scrollTop = 900; });
+      await expect.poll(() => reader.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+      const after = await outline.boundingBox();
+      expect(after).not.toBeNull();
+      expect(Math.abs(after!.x - before!.x)).toBeLessThanOrEqual(1);
+      expect(Math.abs(after!.y - before!.y)).toBeLessThanOrEqual(1);
+      expect(after!.x + after!.width).toBeLessThanOrEqual(viewport.width + 1);
+    }
   });
 
   test("创作弹窗将 Tab 留在弹窗内并在 Escape 后还原触发按钮", async ({ page }) => {

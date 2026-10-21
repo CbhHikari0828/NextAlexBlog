@@ -149,7 +149,7 @@ test.describe("文章智能助手", () => {
       };
     });
     expect(collapsedComposer.width / collapsedComposer.height).toBeGreaterThan(8);
-    expect(collapsedComposer.borderRadius).toBeGreaterThan(100);
+    expect(collapsedComposer.borderRadius).toBeCloseTo(24, 0);
     expect(collapsedComposer.textAlign).toBe("left");
     expect(Math.abs(collapsedComposer.textareaCenter - collapsedComposer.actionCenter)).toBeLessThan(1);
 
@@ -158,10 +158,11 @@ test.describe("文章智能助手", () => {
     await expect.poll(() => composer.evaluate((element) => element.getBoundingClientRect().height)).toBeGreaterThan(collapsedComposer.height + 40);
     const expandedComposer = await composer.evaluate((element) => {
       const rect = element.getBoundingClientRect();
-      return { top: rect.top, bottom: rect.bottom, height: rect.height };
+      return { top: rect.top, bottom: rect.bottom, height: rect.height, borderRadius: Number.parseFloat(getComputedStyle(element).borderRadius) };
     });
     expect(Math.abs(expandedComposer.top - collapsedComposer.top)).toBeLessThan(1);
     expect(expandedComposer.bottom).toBeGreaterThan(collapsedComposer.bottom + 40);
+    expect(expandedComposer.borderRadius).toBeCloseTo(24, 0);
 
     await input.fill("线程池队列满了该怎么办？");
     await expect.poll(() => composer.evaluate((element) => element.getBoundingClientRect().height)).toBeLessThan(expandedComposer.height);
@@ -181,6 +182,78 @@ test.describe("文章智能助手", () => {
     await backButton.click();
     await expect(page).toHaveURL(/\/articles$/);
     await expect(page.locator(".article-index")).toBeVisible();
+  });
+
+  test("长输入会向下扩展并始终锁定在聊天框内", async ({ page }) => {
+    await mockArticles(page);
+
+    for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 }]) {
+      await page.setViewportSize(viewport);
+      await page.goto("/assistant");
+
+      const input = page.getByLabel("向文章智能助手提问");
+      const composer = page.locator(".article-assistant-composer");
+      await input.fill("unbroken-input-token-".repeat(45));
+
+      const bounds = await composer.evaluate((element) => {
+        const textarea = element.querySelector<HTMLTextAreaElement>("textarea")!;
+        const composerRect = element.getBoundingClientRect();
+        const textareaRect = textarea.getBoundingClientRect();
+        return {
+          composerScrollWidth: element.scrollWidth,
+          composerClientWidth: element.clientWidth,
+          composerLeft: composerRect.left,
+          composerRight: composerRect.right,
+          textareaScrollWidth: textarea.scrollWidth,
+          textareaClientWidth: textarea.clientWidth,
+          textareaLeft: textareaRect.left,
+          textareaRight: textareaRect.right,
+          textareaHeight: textareaRect.height,
+          textareaMaxHeight: Number.parseFloat(getComputedStyle(textarea).maxHeight),
+        };
+      });
+
+      expect(bounds.composerScrollWidth).toBeLessThanOrEqual(bounds.composerClientWidth + 1);
+      expect(bounds.textareaScrollWidth).toBeLessThanOrEqual(bounds.textareaClientWidth + 1);
+      expect(bounds.textareaLeft).toBeGreaterThanOrEqual(bounds.composerLeft);
+      expect(bounds.textareaRight).toBeLessThanOrEqual(bounds.composerRight);
+      expect(bounds.textareaHeight).toBeGreaterThan(34);
+      expect(bounds.textareaHeight).toBeLessThanOrEqual(bounds.textareaMaxHeight + 1);
+    }
+  });
+
+  test("发送图标在悬停和提交时播放，并在切换停止按钮前保留", async ({ page }) => {
+    await mockArticles(page);
+    let releaseResponse: () => void;
+    const responseGate = new Promise<void>((resolve) => { releaseResponse = resolve; });
+    await page.route("**/api/assistant", async (route) => {
+      await responseGate;
+      await route.fulfill({
+        status: 200,
+        contentType: "text/event-stream",
+        body: "event: delta\ndata: {\"content\":\"已发送\"}\n\nevent: done\ndata: {\"sources\":[]}\n\n",
+      });
+    });
+    await page.goto("/assistant");
+
+    const input = page.getByLabel("向文章智能助手提问");
+    const sendButton = page.getByRole("button", { name: "发送" });
+    const plane = sendButton.locator(".send-icon g");
+    await input.fill("测试发送图标动画");
+    await expect(sendButton).toBeEnabled();
+    await expect(sendButton.locator(".send-icon svg path")).toHaveCount(2);
+
+    await sendButton.hover();
+    await page.waitForTimeout(120);
+    await expect.poll(() => plane.evaluate((element) => getComputedStyle(element).transform)).not.toBe("none");
+
+    await sendButton.click();
+    await expect(page.locator(".article-assistant-send .send-icon")).toBeVisible();
+    await expect(page.getByRole("button", { name: "停止" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "停止" })).toBeVisible({ timeout: 2_000 });
+
+    releaseResponse!();
+    await expect(page.locator(".article-assistant-panel")).toContainText("已发送");
   });
 
   test("流式展示答案和引用，引用可打开对应文章而不离开助手页", async ({ page }) => {

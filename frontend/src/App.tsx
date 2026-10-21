@@ -14,6 +14,8 @@ import HomeLittlePlanetScene from "./components/HomeLittlePlanetScene";
 import HomeXylophoneBackdrop from "./components/HomeXylophoneScene";
 import { ReplyIcon } from "./components/ReplyIcon";
 import type { ReplyIconHandle } from "./components/ReplyIcon";
+import { SendIcon } from "./components/SendIcon";
+import type { SendIconHandle } from "./components/SendIcon";
 import TravelTraceMap from "./components/TravelTraceMap";
 import { ArticleAssistantError, limitArticleAssistantHistory, streamArticleAssistant } from "./articleAssistant";
 import type { ArticleAssistantHistoryItem, ArticleAssistantSource } from "./articleAssistant";
@@ -2459,6 +2461,7 @@ function ArticleReader({ article, likeArticle, close }: {
   const [headings, setHeadings] = useState<ArticleHeading[]>([]);
   const [activeHeading, setActiveHeading] = useState(0);
   const [outlineOpen, setOutlineOpen] = useState(false);
+  const [outlineHovered, setOutlineHovered] = useState(false);
   const [likeCooldownEndsAt, setLikeCooldownEndsAt] = useState(() => articleLikeCooldownEndsAt(article.id));
   const [liking, setLiking] = useState(false);
   const [closing, requestClose] = useAnimatedDismiss(close, 180);
@@ -2529,6 +2532,7 @@ function ArticleReader({ article, likeArticle, close }: {
     setHeadings(nextHeadings);
     setActiveHeading(0);
     setOutlineOpen(false);
+    setOutlineHovered(false);
   }, [article]);
 
   useEffect(() => {
@@ -2576,6 +2580,7 @@ function ArticleReader({ article, likeArticle, close }: {
     target?.focus({ preventScroll: true });
     setActiveHeading(index);
     setOutlineOpen(false);
+    setOutlineHovered(false);
   };
 
   return (
@@ -2586,11 +2591,12 @@ function ArticleReader({ article, likeArticle, close }: {
         <div className="markdown-content"><ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>{article.content}</ReactMarkdown></div>
       </article>
       {headings.length > 1 && (
-        <nav className={`article-outline${outlineOpen ? " is-open" : ""}`} aria-label="文章导览" ref={outlineRef}>
+        <nav className={`article-outline${outlineOpen ? " is-open" : ""}${outlineHovered ? " is-hovered" : ""}`} aria-label="文章导览" ref={outlineRef} onPointerEnter={(event) => { if (event.pointerType === "mouse") setOutlineHovered(true); }} onPointerLeave={(event) => { if (event.pointerType === "mouse") setOutlineHovered(false); }}>
           <button
             className="article-outline-toggle"
             type="button"
             aria-label={outlineOpen ? "收起文章导览" : "展开文章导览"}
+            title={outlineOpen ? "收起文章导览" : "展开文章导览"}
             aria-expanded={outlineOpen}
             onClick={() => setOutlineOpen((open) => !open)}
             ref={outlineToggleRef}
@@ -2599,14 +2605,14 @@ function ArticleReader({ article, likeArticle, close }: {
               {headings.map((heading, index) => <i className={`level-${heading.level}${activeHeading === index ? " active" : ""}`} key={heading.id} />)}
             </span>
           </button>
-          <div className="article-outline-panel" aria-hidden={!outlineOpen}>
+          <div className="article-outline-panel" aria-hidden={!outlineOpen && !outlineHovered}>
             {headings.map((heading, index) => (
               <button
                 className={`article-outline-link level-${heading.level}${activeHeading === index ? " active" : ""}`}
                 key={heading.id}
                 onClick={() => jumpToHeading(heading, index)}
                 style={{ animationDelay: `${Math.min(index * 10, 60)}ms` }}
-                tabIndex={outlineOpen ? 0 : -1}
+                tabIndex={outlineOpen || outlineHovered ? 0 : -1}
                 type="button"
               >
                 {heading.title}
@@ -2624,6 +2630,7 @@ function ArticleAssistant({ openSource }: {
 }) {
   const panelRef = useRef<HTMLElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const sendIconRef = useRef<SendIconHandle>(null);
   const messageListRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const activeResponseIDRef = useRef<number | null>(null);
@@ -2632,6 +2639,7 @@ function ArticleAssistant({ openSource }: {
   const [messages, setMessages] = useState<AssistantMessage[]>([]);
   const [draft, setDraft] = useState("");
   const [streaming, setStreaming] = useState(false);
+  const [showSendAnimation, setShowSendAnimation] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
@@ -2666,10 +2674,22 @@ function ArticleAssistant({ openSource }: {
     setMessages((current) => current.map((message) => message.id === id ? update(message) : message));
   }, []);
 
+  const playSendAnimation = useCallback(() => {
+    const animation = sendIconRef.current?.startAnimation();
+    if (!animation) return;
+
+    setShowSendAnimation(true);
+    void animation.finally(() => {
+      if (mountedRef.current) setShowSendAnimation(false);
+    });
+  }, []);
+
   const submitQuestion = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const question = draft.trim();
     if (!question || streaming) return;
+
+    playSendAnimation();
 
     const history = limitArticleAssistantHistory(messages
       .filter((message) => message.content.trim())
@@ -2820,6 +2840,7 @@ function ArticleAssistant({ openSource }: {
             value={draft}
             maxLength={1000}
             rows={1}
+            wrap="soft"
             disabled={streaming}
             onChange={(event) => setDraft(event.target.value)}
             onKeyDown={(event) => {
@@ -2830,9 +2851,9 @@ function ArticleAssistant({ openSource }: {
             }}
           />
           <div>
-            {streaming
+            {streaming && !showSendAnimation
               ? <button aria-label="停止" className="article-assistant-stop" title="停止生成" type="button" onClick={stopResponse}><CircleStop size={16} aria-hidden="true" /></button>
-              : <button aria-label="发送" className="article-assistant-send" title="发送问题" type="submit" disabled={!draft.trim()}><Send size={16} aria-hidden="true" /></button>}
+              : <button aria-label="发送" className="article-assistant-send" title="发送问题" type="submit" disabled={streaming || showSendAnimation || !draft.trim()} onMouseEnter={() => { void sendIconRef.current?.startAnimation(); }}><SendIcon ref={sendIconRef} size={16} isAnimated={false} aria-hidden="true" /></button>}
           </div>
         </form>
       </div>
