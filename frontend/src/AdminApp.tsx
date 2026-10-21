@@ -1,8 +1,9 @@
 import { ChangeEvent, FormEvent, useEffect, useState } from "react";
-import { ArrowLeft, BookOpen, Code2, Eye, EyeOff, FileText, Gamepad2, GitBranch, Image, LayoutDashboard, MessageSquare, Music2, Plus, RefreshCw, Save, Send, Trash2, Upload, Wrench, X } from "lucide-react";
+import { ArrowLeft, BookOpen, Code2, Eye, EyeOff, FileText, Gamepad2, GitBranch, Image, LayoutDashboard, LoaderCircle, LockKeyhole, LogIn, LogOut, MessageSquare, Music2, Plus, RefreshCw, Save, Send, Trash2, Upload, UserRound, Wrench, X } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
+import { ADMIN_UNAUTHORIZED_EVENT, adminFetch } from "./adminAuth";
 
 const MAX_GALLERY_IMAGE_SIZE = 10 * 1024 * 1024;
 
@@ -136,6 +137,16 @@ type AdminArticle = {
   status: "draft" | "published";
 };
 
+type AdminSession = {
+  authenticated: true;
+  username: string;
+};
+
+type AdminAuthState =
+  | { status: "checking"; username: "" }
+  | { status: "anonymous"; username: "" }
+  | { status: "authenticated"; username: string };
+
 const articleEditorConfig: MarkdownEditorConfig = {
   section: "文章发布",
   draftKey: "nextalex-admin-article-draft",
@@ -229,7 +240,153 @@ function parseMarkdownImport(source: string, filename: string, current: Markdown
   };
 }
 
+function replaceAdminPath(path: "/admin" | "/admin/login") {
+  if (window.location.pathname !== path || window.location.search) {
+    window.history.replaceState({}, "", path);
+  }
+}
+
+function parseAdminSession(payload: unknown): AdminSession | null {
+  if (!payload || typeof payload !== "object") return null;
+  const session = payload as Partial<AdminSession>;
+  if (session.authenticated !== true || typeof session.username !== "string" || !session.username.trim()) return null;
+  return { authenticated: true, username: session.username.trim() };
+}
+
 function AdminApp() {
+  const [authState, setAuthState] = useState<AdminAuthState>({ status: "checking", username: "" });
+  const [authError, setAuthError] = useState("");
+  const [loggingOut, setLoggingOut] = useState(false);
+
+  useEffect(() => {
+    const controller = new AbortController();
+
+    fetch("/api/admin/session", { cache: "no-store", credentials: "same-origin", signal: controller.signal })
+      .then(async (response) => {
+        if (response.status === 401) return null;
+        if (!response.ok) throw new Error("session request failed");
+        const session = parseAdminSession(await response.json());
+        if (!session) throw new Error("invalid session response");
+        return session;
+      })
+      .then((session) => {
+        if (!session) {
+          replaceAdminPath("/admin/login");
+          setAuthState({ status: "anonymous", username: "" });
+          return;
+        }
+        replaceAdminPath("/admin");
+        setAuthState({ status: "authenticated", username: session.username });
+      })
+      .catch((error: unknown) => {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        replaceAdminPath("/admin/login");
+        setAuthError("暂时无法验证登录状态，请重新登录");
+        setAuthState({ status: "anonymous", username: "" });
+      });
+
+    return () => controller.abort();
+  }, []);
+
+  useEffect(() => {
+    const handleUnauthorized = () => {
+      setLoggingOut(false);
+      setAuthError("登录状态已失效，请重新登录");
+      setAuthState({ status: "anonymous", username: "" });
+      replaceAdminPath("/admin/login");
+    };
+
+    window.addEventListener(ADMIN_UNAUTHORIZED_EVENT, handleUnauthorized);
+    return () => window.removeEventListener(ADMIN_UNAUTHORIZED_EVENT, handleUnauthorized);
+  }, []);
+
+  async function login(username: string, password: string) {
+    try {
+      const response = await fetch("/api/admin/login", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, password }),
+      });
+      if (response.status === 401) return "账号或密码错误";
+      if (!response.ok) return "登录服务暂不可用，请稍后重试";
+      const session = parseAdminSession(await response.json());
+      if (!session) return "登录响应无效，请稍后重试";
+      setAuthError("");
+      setAuthState({ status: "authenticated", username: session.username });
+      replaceAdminPath("/admin");
+      return "";
+    } catch {
+      return "无法连接登录服务，请稍后重试";
+    }
+  }
+
+  async function logout() {
+    if (loggingOut) return;
+    setLoggingOut(true);
+    try {
+      const response = await fetch("/api/admin/logout", { method: "POST", credentials: "same-origin" });
+      if (!response.ok && response.status !== 401) throw new Error("logout failed");
+      setAuthError("");
+      setAuthState({ status: "anonymous", username: "" });
+      replaceAdminPath("/admin/login");
+    } catch {
+      setAuthError("退出失败，请稍后重试");
+    } finally {
+      setLoggingOut(false);
+    }
+  }
+
+  if (authState.status === "checking") return <AdminAuthLoading />;
+  if (authState.status === "anonymous") return <AdminLogin initialError={authError} login={login} />;
+  return <AdminDashboard username={authState.username} loggingOut={loggingOut} logout={logout} logoutError={authError} />;
+}
+
+function AdminAuthLoading() {
+  return <main className="admin-auth-shell"><div className="admin-auth-loading" role="status"><LoaderCircle className="is-spinning" size={20} aria-hidden="true" /><span>正在验证登录状态</span></div></main>;
+}
+
+function AdminLogin({ initialError, login }: { initialError: string; login: (username: string, password: string) => Promise<string> }) {
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState(initialError);
+  const [submitting, setSubmitting] = useState(false);
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!username.trim() || !password) {
+      setError("请输入账号和密码");
+      return;
+    }
+    setSubmitting(true);
+    setError("");
+    const message = await login(username.trim(), password);
+    if (message) setError(message);
+    setSubmitting(false);
+  }
+
+  return (
+    <main className="admin-auth-shell">
+      <section className="admin-login-panel" aria-labelledby="admin-login-title">
+        <header>
+          <span className="admin-login-mark" aria-hidden="true"><LockKeyhole size={21} strokeWidth={1.9} /></span>
+          <div><p>身份验证</p><h1 id="admin-login-title">管理后台</h1></div>
+        </header>
+        <form onSubmit={submit}>
+          <label htmlFor="admin-username">账号</label>
+          <input id="admin-username" name="username" autoComplete="username" autoFocus value={username} onChange={(event) => { setUsername(event.target.value); setError(""); }} disabled={submitting} />
+          <label htmlFor="admin-password">密码</label>
+          <input id="admin-password" name="password" type="password" autoComplete="current-password" value={password} onChange={(event) => { setPassword(event.target.value); setError(""); }} disabled={submitting} />
+          <p className="admin-login-error" role="alert" aria-live="polite">{error}</p>
+          <button className="admin-primary-button admin-login-submit" type="submit" disabled={submitting}>{submitting ? <LoaderCircle className="is-spinning" size={17} aria-hidden="true" /> : <LogIn size={17} aria-hidden="true" />}{submitting ? "登录中" : "登录"}</button>
+        </form>
+        <a className="admin-login-back" href="/"><ArrowLeft size={15} aria-hidden="true" />返回网站</a>
+      </section>
+    </main>
+  );
+}
+
+function AdminDashboard({ username, loggingOut, logout, logoutError }: { username: string; loggingOut: boolean; logout: () => Promise<void>; logoutError: string }) {
   const [activeSection, setActiveSection] = useState<AdminSection>("总览");
 
   function openSection(section: AdminSection) {
@@ -245,6 +402,12 @@ function AdminApp() {
             <button className={activeSection === label ? "active" : ""} type="button" key={label} aria-current={activeSection === label ? "page" : undefined} aria-label={label} title={label} onClick={() => openSection(label)}><Icon size={18} strokeWidth={1.9} aria-hidden="true" /><span>{label}</span></button>
           ))}
         </nav>
+        <div className="admin-account">
+          <UserRound size={18} strokeWidth={1.9} aria-hidden="true" />
+          <div><strong>{username}</strong><span>管理员</span></div>
+          <button type="button" aria-label="退出登录" title="退出登录" onClick={() => { void logout(); }} disabled={loggingOut}>{loggingOut ? <LoaderCircle className="is-spinning" size={17} aria-hidden="true" /> : <LogOut size={17} aria-hidden="true" />}</button>
+        </div>
+        {logoutError && <p className="admin-account-error" role="status">{logoutError}</p>}
       </aside>
 
       <section className="admin-workspace">
@@ -327,7 +490,7 @@ function MarkdownEditor({ config, back }: { config: MarkdownEditorConfig; back: 
     if (config.section === "笔记发布") {
       setSaveState("发布中");
       try {
-        const response = await fetch("/api/admin/notes", {
+        const response = await adminFetch("/api/admin/notes", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ title: draft.title.trim(), date: draft.date, content: draft.content.trim() }),
@@ -354,7 +517,7 @@ function MarkdownEditor({ config, back }: { config: MarkdownEditorConfig; back: 
   async function deleteNote(note: AdminNote) {
     if (!window.confirm(`删除笔记“${note.title}”？`)) return;
     try {
-      const response = await fetch(`/api/admin/notes/${note.id}`, { method: "DELETE" });
+      const response = await adminFetch(`/api/admin/notes/${note.id}`, { method: "DELETE" });
       if (!response.ok) throw new Error("Note deletion failed");
       setPublishedNotes((current) => current.filter((item) => item.id !== note.id));
     } catch {
@@ -390,7 +553,7 @@ function ArticleManager({ back }: { back: () => void }) {
 
   useEffect(() => {
     const controller = new AbortController();
-    fetch("/api/admin/articles", { cache: "no-store", signal: controller.signal })
+    adminFetch("/api/admin/articles", { cache: "no-store", signal: controller.signal })
       .then((response) => response.ok ? response.json() as Promise<AdminArticle[]> : Promise.reject(new Error("article list failed")))
       .then((articles) => setRecords(Array.isArray(articles) ? articles : []))
       .catch((error: unknown) => {
@@ -468,7 +631,7 @@ function ArticleManager({ back }: { back: () => void }) {
     setSaveState(status === "published" ? "发布中" : "保存中");
     try {
       const endpoint = editingID === null ? "/api/admin/articles" : `/api/admin/articles/${editingID}`;
-      const response = await fetch(endpoint, {
+      const response = await adminFetch(endpoint, {
         method: editingID === null ? "POST" : "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -486,7 +649,7 @@ function ArticleManager({ back }: { back: () => void }) {
   async function deleteArticle(article: AdminArticle) {
     if (!window.confirm(`删除文章“${article.title}”？`)) return;
     try {
-      const response = await fetch(`/api/admin/articles/${article.id}`, { method: "DELETE" });
+      const response = await adminFetch(`/api/admin/articles/${article.id}`, { method: "DELETE" });
       if (!response.ok) throw new Error("article delete failed");
       setRecords((current) => current.filter((item) => item.id !== article.id));
       if (editingID === article.id) resetEditor();
@@ -600,7 +763,7 @@ function GalleryManager({ back }: { back: () => void }) {
     else payload.set("image_url", values.image.trim());
     try {
       const endpoint = editingId === null ? "/api/admin/gallery" : `/api/admin/gallery/${editingId}`;
-      const response = await fetch(endpoint, { method: editingId === null ? "POST" : "PUT", body: payload });
+      const response = await adminFetch(endpoint, { method: editingId === null ? "POST" : "PUT", body: payload });
       if (!response.ok) throw new Error("Gallery upload failed");
       const saved = await response.json() as GalleryCreation;
       if (!saved.image) throw new Error("Invalid gallery response");
@@ -620,7 +783,7 @@ function GalleryManager({ back }: { back: () => void }) {
   async function deleteRecord(id: number) {
     if (!window.confirm("删除这张图片？")) return;
     try {
-      const response = await fetch(`/api/admin/gallery/${id}`, { method: "DELETE" });
+      const response = await adminFetch(`/api/admin/gallery/${id}`, { method: "DELETE" });
       if (!response.ok) throw new Error("Gallery delete failed");
       setRecords((current) => current.filter((record) => record.id !== id));
       if (editingId === id) {
@@ -660,7 +823,7 @@ function ProjectSync({ back }: { back: () => void }) {
   async function syncProjects() {
     setSyncState("syncing");
     try {
-      const response = await fetch("/api/admin/github/refresh", { method: "POST", cache: "no-store" });
+      const response = await adminFetch("/api/admin/github/refresh", { method: "POST", cache: "no-store" });
       if (!response.ok) throw new Error("GitHub refresh request failed");
       const nextData = await response.json() as GitHubOverview;
       if (!nextData.profile?.username || !Array.isArray(nextData.repositories) || !nextData.refreshedAt) throw new Error("Invalid GitHub overview response");
@@ -682,7 +845,7 @@ function SteamSync({ back }: { back: () => void }) {
   async function refreshSteam() {
     setSyncState("syncing");
     try {
-      const response = await fetch("/api/admin/steam/refresh", { method: "POST", cache: "no-store" });
+      const response = await adminFetch("/api/admin/steam/refresh", { method: "POST", cache: "no-store" });
       if (!response.ok) throw new Error("Steam refresh request failed");
       const nextData = await response.json() as SteamOverview;
       if (!Array.isArray(nextData.games) || !Array.isArray(nextData.recentlyPlayed) || !nextData.refreshedAt) throw new Error("Invalid Steam overview response");
@@ -724,7 +887,7 @@ function MusicManager({ back }: { back: () => void }) {
     if (!url.trim()) return;
     setImportState("importing");
     try {
-      const response = await fetch("/api/admin/music/import", {
+      const response = await adminFetch("/api/admin/music/import", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ url: url.trim() }),
@@ -742,7 +905,7 @@ function MusicManager({ back }: { back: () => void }) {
 
   async function deleteMusic(id: number) {
     try {
-      const response = await fetch(`/api/admin/music/${id}`, { method: "DELETE" });
+      const response = await adminFetch(`/api/admin/music/${id}`, { method: "DELETE" });
       if (!response.ok) throw new Error("Music deletion failed");
       setPreferences((current) => current.filter((item) => item.id !== id));
     } catch {
@@ -762,7 +925,7 @@ function OpenSourceToolsManager({ back }: { back: () => void }) {
   const [description, setDescription] = useState("");
   const [state, setState] = useState<"idle" | "loading" | "saving" | "failed" | "saved">("idle");
 
-  const loadTools = () => fetch("/api/admin/open-source-tools", { cache: "no-store" })
+  const loadTools = () => adminFetch("/api/admin/open-source-tools", { cache: "no-store" })
     .then((response) => response.ok ? response.json() as Promise<OpenSourceTool[]> : Promise.reject(new Error("tools list failed")))
     .then((data) => setTools(Array.isArray(data) ? data : []))
     .catch(() => setState("failed"));
@@ -773,7 +936,7 @@ function OpenSourceToolsManager({ back }: { back: () => void }) {
     if (!githubUrl.trim()) return;
     setState("loading");
     try {
-      const response = await fetch("/api/admin/open-source-tools/metadata", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ githubUrl: githubUrl.trim() }) });
+      const response = await adminFetch("/api/admin/open-source-tools/metadata", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ githubUrl: githubUrl.trim() }) });
       if (!response.ok) throw new Error("metadata failed");
       const data = await response.json() as Pick<OpenSourceTool, "name" | "author" | "githubUrl">;
       if (!data.name || !data.author || !data.githubUrl) throw new Error("invalid metadata");
@@ -786,7 +949,7 @@ function OpenSourceToolsManager({ back }: { back: () => void }) {
     if (!githubUrl.trim() || !description.trim()) return;
     setState("saving");
     try {
-      const response = await fetch("/api/admin/open-source-tools", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ githubUrl: githubUrl.trim(), description: description.trim() }) });
+      const response = await adminFetch("/api/admin/open-source-tools", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ githubUrl: githubUrl.trim(), description: description.trim() }) });
       if (!response.ok) throw new Error("save failed");
       const saved = await response.json() as OpenSourceTool;
       setTools((current) => [saved, ...current.filter((tool) => tool.id !== saved.id)]);
@@ -796,7 +959,7 @@ function OpenSourceToolsManager({ back }: { back: () => void }) {
 
   async function updateVisibility(tool: OpenSourceTool) {
     try {
-      const response = await fetch(`/api/admin/open-source-tools/${tool.id}/visibility`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ hidden: !tool.hidden }) });
+      const response = await adminFetch(`/api/admin/open-source-tools/${tool.id}/visibility`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ hidden: !tool.hidden }) });
       if (!response.ok) throw new Error("visibility failed");
       const saved = await response.json() as OpenSourceTool;
       setTools((current) => current.map((item) => item.id === saved.id ? saved : item));
@@ -831,7 +994,7 @@ function GuestbookManager({ back }: { back: () => void }) {
 
   async function removeMessage(message: GuestbookMessage, index: number) {
     if (message.id) {
-      const response = await fetch(`/api/admin/guestbook/messages/${message.id}`, { method: "DELETE" });
+      const response = await adminFetch(`/api/admin/guestbook/messages/${message.id}`, { method: "DELETE" });
       if (!response.ok) return;
     }
     const next = messages.filter((_, messageIndex) => messageIndex !== index);

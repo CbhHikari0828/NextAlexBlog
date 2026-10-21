@@ -1,6 +1,12 @@
 import { expect, test } from "@playwright/test";
 
 test.describe("页面切换和弹窗交互", () => {
+  test.beforeEach(async ({ page }) => {
+    await page.route("**/api/admin/session", async (route) => {
+      await route.fulfill({ contentType: "application/json", body: JSON.stringify({ authenticated: true, username: "alexlee" }) });
+    });
+  });
+
   test("管理员端按需打开文章编辑器并支持 Markdown 预览", async ({ page }) => {
     await page.goto("/admin");
 
@@ -125,7 +131,7 @@ test.describe("页面切换和弹窗交互", () => {
     await page.goto("/admin");
 
     const navigation = page.locator(".admin-nav");
-    await expect(navigation.getByRole("button")).toHaveCount(8);
+    await expect(navigation.getByRole("button")).toHaveCount(9);
     await expect(navigation.getByRole("button", { name: "Steam 同步" })).toHaveCount(1);
     await expect(navigation.getByRole("button", { name: "音乐管理" })).toHaveCount(1);
     await expect(navigation.getByRole("button", { name: "媒体管理" })).toHaveCount(0);
@@ -319,19 +325,66 @@ test.describe("页面切换和弹窗交互", () => {
   });
 
   test("文章阅读器循环焦点并在 Escape 后还原触发按钮", async ({ page }) => {
-    await page.goto("/");
+    const article = {
+      id: 98,
+      slug: "reader-focus",
+      title: "文章阅读器焦点测试",
+      category: "工程实践",
+      series: "交互细节",
+      tags: ["可访问性"],
+      date: "2026-10-20",
+      readTime: "5 min",
+      views: 0,
+      likes: 0,
+      summary: "用于验证文章阅读器焦点和导览交互。",
+      content: "## 焦点管理\n\n阅读器打开后应将焦点放到返回按钮。\n\n```ts\nconst value = 1;\n```\n\n## 章节导览\n\n右侧导览应可通过鼠标和键盘操作。",
+    };
+    await page.route("**/api/articles", async (route) => {
+      await route.fulfill({ contentType: "application/json", body: JSON.stringify([article]) });
+    });
+    await page.route("**/api/articles/98/view", async (route) => {
+      await route.fulfill({ contentType: "application/json", body: JSON.stringify({ views: 1, likes: 0 }) });
+    });
+    await page.goto("/articles");
 
-    const articleTrigger = page.locator(".recent-article").first();
+    const articleTrigger = page.locator(".article-feed-item").first();
     await articleTrigger.click();
 
     const reader = page.locator(".article-reader");
     const backButton = page.locator(".article-reader-back");
     const outlineToggle = page.locator(".article-outline-toggle");
+    const outlinePanel = page.locator(".article-outline-panel");
     await expect(reader).toBeVisible();
     await expect(backButton).toBeFocused();
     await expect(outlineToggle).toBeVisible();
+    await expect(outlineToggle).toHaveAttribute("title", "展开文章导览");
     await expect(reader.locator("pre code.hljs").first()).toBeVisible();
     await expect(reader.locator("pre code .hljs-keyword").first()).toBeVisible();
+
+    await outlineToggle.hover();
+    await expect(outlineToggle).toHaveAttribute("aria-expanded", "false");
+    await expect(outlinePanel).toBeVisible();
+    await expect(outlinePanel).toHaveAttribute("aria-hidden", "false");
+    const outlineVisuals = await outlinePanel.evaluate((element) => {
+      const style = getComputedStyle(element);
+      return {
+        borderRadius: Number.parseFloat(style.borderRadius),
+        backdropFilter: style.backdropFilter,
+        backgroundColor: style.backgroundColor,
+      };
+    });
+    expect(outlineVisuals.borderRadius).toBeGreaterThan(0);
+    expect(outlineVisuals.backdropFilter).toContain("blur(");
+    expect(outlineVisuals.backgroundColor).toMatch(/^rgba\(/);
+    const activeOutlineLink = outlinePanel.locator(".article-outline-link.active");
+    await expect(activeOutlineLink).toHaveCount(1);
+    await expect(activeOutlineLink).toHaveCSS("box-shadow", "none");
+    await expect(outlinePanel).toContainText("焦点管理");
+    await expect(outlinePanel).toContainText("章节导览");
+    await outlinePanel.hover();
+    await expect(outlinePanel).toBeVisible();
+    await reader.locator(".article-reader-intro h1").hover();
+    await expect(outlinePanel).not.toBeVisible();
 
     await page.keyboard.press("Shift+Tab");
     await expect(outlineToggle).toBeFocused();
@@ -343,12 +396,59 @@ test.describe("页面切换和弹窗交互", () => {
     await expect(articleTrigger).toBeFocused();
   });
 
+  test("文章导览在阅读器滚动时持续固定在视口右侧", async ({ page }) => {
+    const article = {
+      id: 99,
+      slug: "fixed-outline",
+      title: "固定文章导览测试",
+      category: "工程实践",
+      series: "阅读体验",
+      tags: ["导航"],
+      date: "2026-10-20",
+      readTime: "12 min",
+      views: 0,
+      likes: 0,
+      summary: "用于验证滚动时文章导览仍留在视口右侧。",
+      content: Array.from({ length: 12 }, (_, index) => `## 第 ${index + 1} 节\n\n${"这一段正文用于制造足够的阅读器滚动高度。".repeat(28)}`).join("\n\n"),
+    };
+
+    await page.route("**/api/articles", async (route) => {
+      await route.fulfill({ contentType: "application/json", body: JSON.stringify([article]) });
+    });
+    await page.route("**/api/articles/99/view", async (route) => {
+      await route.fulfill({ contentType: "application/json", body: JSON.stringify({ views: 1, likes: 0 }) });
+    });
+
+    for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 }]) {
+      await page.setViewportSize(viewport);
+      await page.goto("/articles");
+      await page.locator(".article-feed-item").filter({ hasText: article.title }).click();
+
+      const reader = page.locator(".article-reader");
+      const outline = page.locator(".article-outline");
+      await expect(reader).toBeVisible();
+      await expect(outline).toBeInViewport();
+      await expect.poll(() => reader.evaluate((element) => getComputedStyle(element).transform)).toBe("none");
+      await expect.poll(() => reader.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true);
+
+      const before = await outline.boundingBox();
+      expect(before).not.toBeNull();
+      await reader.evaluate((element) => { element.scrollTop = 900; });
+      await expect.poll(() => reader.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+      const after = await outline.boundingBox();
+      expect(after).not.toBeNull();
+      expect(Math.abs(after!.x - before!.x)).toBeLessThanOrEqual(1);
+      expect(Math.abs(after!.y - before!.y)).toBeLessThanOrEqual(1);
+      expect(after!.x + after!.width).toBeLessThanOrEqual(viewport.width + 1);
+    }
+  });
+
   test("创作弹窗将 Tab 留在弹窗内并在 Escape 后还原触发按钮", async ({ page }) => {
     await page.route("**/api/gallery", async (route) => {
       await route.fulfill({ contentType: "application/json", body: JSON.stringify([{
         id: 1,
         title: "测试作品",
-        image: "https://oss.example.com/gallery/test.png",
+        image: "/home-wavy-background.jpg",
         model: "测试模型",
         prompt: "测试提示词",
         createdAt: "2026-08-19T00:00:00Z",
@@ -358,14 +458,45 @@ test.describe("页面切换和弹窗交互", () => {
 
     await page.locator(".main-nav").getByRole("tab", { name: "创作图库", exact: true }).click();
     const creationTrigger = page.locator(".gallery-card-image").first();
+    await expect.poll(() => creationTrigger.evaluate((image: HTMLImageElement) => image.naturalWidth)).toBeGreaterThan(0);
     await creationTrigger.click();
     const detailTrigger = page.locator(".gallery-card-content button").first();
     await detailTrigger.click();
 
     const backdrop = page.locator(".drawer-backdrop");
+    const drawer = page.locator(".creation-drawer");
     const closeButton = page.locator(".close-button");
     await expect(backdrop).toBeVisible();
+    await expect(drawer).toBeVisible();
     await expect(closeButton).toBeFocused();
+    expect(await backdrop.evaluate((element) => element.parentElement === document.body)).toBe(true);
+
+    const drawerIsAbovePreview = await page.evaluate(() => {
+      const drawerElement = document.querySelector<HTMLElement>(".creation-drawer");
+      const previewElement = document.querySelector<HTMLElement>(".layout-grid-selected");
+      if (!drawerElement || !previewElement) return false;
+
+      const drawerBounds = drawerElement.getBoundingClientRect();
+      const previewBounds = previewElement.getBoundingClientRect();
+      const left = Math.max(drawerBounds.left, previewBounds.left);
+      const right = Math.min(drawerBounds.right, previewBounds.right);
+      const top = Math.max(drawerBounds.top, previewBounds.top);
+      const bottom = Math.min(drawerBounds.bottom, previewBounds.bottom);
+      if (right <= left || bottom <= top) return false;
+
+      const inertAncestors = Array.from(document.querySelectorAll<HTMLElement>("[inert]"));
+      const previousInert = inertAncestors.map((element) => ({ element, inert: element.inert }));
+      previousInert.forEach(({ element }) => { element.inert = false; });
+      try {
+        const elements = document.elementsFromPoint((left + right) / 2, (top + bottom) / 2);
+        const drawerIndex = elements.findIndex((element) => drawerElement.contains(element));
+        const previewIndex = elements.findIndex((element) => previewElement.contains(element));
+        return drawerIndex >= 0 && previewIndex >= 0 && drawerIndex < previewIndex;
+      } finally {
+        previousInert.forEach(({ element, inert }) => { element.inert = inert; });
+      }
+    });
+    expect(drawerIsAbovePreview).toBe(true);
 
     await page.keyboard.press("Tab");
     await expect(closeButton).toBeFocused();

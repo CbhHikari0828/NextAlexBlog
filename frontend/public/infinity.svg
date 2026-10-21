@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="8 14 24 12" width="64" height="64" stroke="#ffffff" stroke-width="2">
+  <g>
+    <animateTransform attributeName="transform" type="translate" values="20,20;20,20;20,20" dur="8s" repeatCount="indefinite" calcMode="spline" keyTimes="0;0.0025;1" keySplines="0 0 1 1;0 0 1 1" additive="replace"/>
+    <g>
+      <animateTransform attributeName="transform" type="rotate" values="0,0,0;0,0,0;0,0,0" dur="8s" repeatCount="indefinite" calcMode="spline" keyTimes="0;0.0025;1" keySplines="0 0 1 1;0 0 1 1" additive="replace"/>
+      <g>
+        <animateTransform attributeName="transform" type="translate" values="0,0;0,0;0,0" dur="8s" repeatCount="indefinite" calcMode="spline" keyTimes="0;0.0025;1" keySplines="0 0 1 1;0 0 1 1" additive="replace"/>
+        <g>
+        <animateTransform attributeName="transform" type="scale" values="1,1;1,1;1,1" dur="8s" repeatCount="indefinite" calcMode="spline" keyTimes="0;0.0025;1" keySplines="0 0 1 1;0 0 1 1" additive="replace"/>
+        <path d="M6 16c5 0 7-8 12-8a4 4 0 1 1 0 8c-5 0-7-8-12-8a4 4 0 1 0 0 8" transform="translate(-12,-12)" fill="none" stroke="#bcbcbc" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="54.88" stroke-dashoffset="54.88">
+            <animate attributeName="opacity" values="1;1;1" dur="8s" repeatCount="indefinite" calcMode="spline" keyTimes="0;0.0025;1" keySplines="0 0 1 1;0 0 1 1"/>
+            <animate attributeName="stroke" values="#bcbcbc;#bcbcbc;#bcbcbc" dur="8s" repeatCount="indefinite" calcMode="spline" keyTimes="0;0.0025;1" keySplines="0 0 1 1;0 0 1 1"/>
+            <animate attributeName="stroke-width" values="2;2;2" dur="8s" repeatCount="indefinite" calcMode="spline" keyTimes="0;0.0025;1" keySplines="0 0 1 1;0 0 1 1"/>
+            <animate attributeName="stroke-dashoffset" values="54.88;0;0" dur="8s" repeatCount="indefinite" calcMode="spline" keyTimes="0;0.75;1" keySplines="0.42 0 0.58 1;0 0 1 1"/>
+        </path>
+        </g>
+      </g>
+    </g>
+  </g>
+</svg>

@@ -23,6 +23,10 @@ services:
       DATABASE_URL: postgres://${POSTGRES_USER:-blog}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-blog}?sslmode=disable
       BACKEND_PORT: "8090"
       GIN_MODE: release
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-alexlee}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-alexlee}
+      ADMIN_SESSION_SECRET: ${ADMIN_SESSION_SECRET:?Set ADMIN_SESSION_SECRET}
+      ADMIN_COOKIE_SECURE: ${ADMIN_COOKIE_SECURE:-true}
       GITHUB_USERNAME: ${GITHUB_USERNAME:-CbhHikari0828}
       STEAM_ID: ${STEAM_ID:-}
       STEAM_WEB_API_KEY: ${STEAM_WEB_API_KEY:-}
@@ -39,6 +43,11 @@ services:
       SMTP_USERNAME: ${SMTP_USERNAME:-}
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
       NOTIFICATION_TO_EMAIL: ${NOTIFICATION_TO_EMAIL:-}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:?Set DEEPSEEK_API_KEY}
+      DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-https://api.deepseek.com}
+      DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-v4-pro}
+      DEEPSEEK_TIMEOUT_SECONDS: ${DEEPSEEK_TIMEOUT_SECONDS:-45}
+      DEEPSEEK_MAX_OUTPUT_TOKENS: ${DEEPSEEK_MAX_OUTPUT_TOKENS:-1200}
     depends_on:
       postgres:
         condition: service_healthy
@@ -53,11 +62,15 @@ services:
     restart: unless-stopped
     ports:
       - "${FRONTEND_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
+    volumes:
+      - ${TLS_CERTIFICATE_PATH:-./certs/cameron.best_bundle.crt}:/etc/nginx/tls/fullchain.pem:ro
+      - ${TLS_PRIVATE_KEY_PATH:-./certs/cameron.best.key}:/etc/nginx/tls/privkey.pem:ro
     depends_on:
       backend:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/"]
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/healthz"]
       interval: 5s
       timeout: 5s
       retries: 10

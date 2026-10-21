@@ -741,6 +741,10 @@ func main() {
 	githubUsername := envOrDefault("GITHUB_USERNAME", "CbhHikari0828")
 	steamAPIKey := strings.TrimSpace(os.Getenv("STEAM_WEB_API_KEY"))
 	steamID := strings.TrimSpace(os.Getenv("STEAM_ID"))
+	adminAuth, err := newAdminAuthenticatorFromEnvironment()
+	if err != nil {
+		log.Fatalf("configure admin authentication: %v", err)
+	}
 
 	pool, err := pgxpool.New(context.Background(), databaseURL)
 	if err != nil {
@@ -778,6 +782,7 @@ func main() {
 	if err := migrateLegacyArticles(context.Background(), pool, articleStore); err != nil {
 		log.Fatalf("migrate legacy articles: %v", err)
 	}
+	articleAI := newArticleAssistant(articleStore, newArticleAssistantConfigFromEnvironment())
 	galleryStorage, storageErr := newOSSGalleryImageStorage()
 	if storageErr != nil && !errors.Is(storageErr, errGalleryStorageNotConfigured) {
 		log.Printf("gallery image storage unavailable: %v", storageErr)
@@ -785,30 +790,37 @@ func main() {
 
 	router := gin.New()
 	router.Use(gin.Logger(), gin.Recovery())
+	router.POST("/api/admin/login", adminLoginHandler(adminAuth))
+	router.GET("/api/admin/session", adminSessionHandler(adminAuth))
+	router.POST("/api/admin/logout", adminLogoutHandler(adminAuth))
+	admin := router.Group("/api/admin")
+	admin.Use(adminAuthMiddleware(adminAuth))
 	router.GET("/api/health", healthHandler(pool))
 	router.GET("/api/articles", articlesHandler(articleStore, false))
 	router.GET("/api/articles/:id", articleHandler(articleStore, false))
 	router.POST("/api/articles/:id/view", articleEngagementHandler(articleStore, "view"))
 	router.POST("/api/articles/:id/like", articleEngagementHandler(articleStore, "like"))
-	router.GET("/api/admin/articles", articlesHandler(articleStore, true))
-	router.GET("/api/admin/articles/:id", articleHandler(articleStore, true))
-	router.POST("/api/admin/articles", articleCreateHandler(articleStore))
-	router.PUT("/api/admin/articles/:id", articleUpdateHandler(articleStore))
-	router.DELETE("/api/admin/articles/:id", articleDeleteHandler(articleStore))
+	router.POST("/api/assistant", globalArticleAssistantHandler(articleAI))
+	router.POST("/api/articles/:id/assistant", articleAssistantHandler(articleAI))
+	admin.GET("/articles", articlesHandler(articleStore, true))
+	admin.GET("/articles/:id", articleHandler(articleStore, true))
+	admin.POST("/articles", articleCreateHandler(articleStore))
+	admin.PUT("/articles/:id", articleUpdateHandler(articleStore))
+	admin.DELETE("/articles/:id", articleDeleteHandler(articleStore))
 	githubClient := &http.Client{Timeout: 10 * time.Second}
 	githubStore := postgresGitHubOverviewStore{pool: pool}
 	router.GET("/api/github/contributions", githubContributionsSnapshotHandler(githubStore))
 	router.GET("/api/github/repositories", githubRepositoriesSnapshotHandler(githubStore))
 	router.GET("/api/github/profile", githubProfileSnapshotHandler(githubStore))
-	router.POST("/api/admin/github/refresh", githubRefreshHandler(githubClient, githubUsername, githubStore))
+	admin.POST("/github/refresh", githubRefreshHandler(githubClient, githubUsername, githubStore))
 	steamStore := postgresSteamOverviewStore{pool: pool}
 	router.GET("/api/steam/overview", steamOverviewHandler(steamStore))
-	router.POST("/api/admin/steam/refresh", steamRefreshHandler(githubClient, steamAPIKey, steamID, steamStore))
+	admin.POST("/steam/refresh", steamRefreshHandler(githubClient, steamAPIKey, steamID, steamStore))
 	musicStore := postgresMusicPreferenceStore{pool: pool}
 	musicClient := newMusicClient()
 	router.GET("/api/music", musicPreferencesHandler(musicStore))
-	router.POST("/api/admin/music/import", musicImportHandler(musicClient, musicStore))
-	router.DELETE("/api/admin/music/:id", musicDeleteHandler(musicStore))
+	admin.POST("/music/import", musicImportHandler(musicClient, musicStore))
+	admin.DELETE("/music/:id", musicDeleteHandler(musicStore))
 	galleryStore := postgresGalleryCreationStore{pool: pool}
 	if storage, ok := galleryStorage.(*ossGalleryImageStorage); ok {
 		repairContext, repairCancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -818,22 +830,22 @@ func main() {
 		repairCancel()
 	}
 	router.GET("/api/gallery", galleryCreationsHandler(galleryStore))
-	router.POST("/api/admin/gallery", galleryCreationImportHandler(galleryStorage, galleryStore))
-	router.PUT("/api/admin/gallery/:id", galleryCreationUpdateHandler(galleryStorage, galleryStore))
-	router.DELETE("/api/admin/gallery/:id", galleryCreationDeleteHandler(galleryStorage, galleryStore))
+	admin.POST("/gallery", galleryCreationImportHandler(galleryStorage, galleryStore))
+	admin.PUT("/gallery/:id", galleryCreationUpdateHandler(galleryStorage, galleryStore))
+	admin.DELETE("/gallery/:id", galleryCreationDeleteHandler(galleryStorage, galleryStore))
 	noteStore := postgresNoteStore{pool: pool}
 	router.GET("/api/notes", notesHandler(noteStore))
-	router.POST("/api/admin/notes", noteCreateHandler(noteStore))
-	router.DELETE("/api/admin/notes/:id", noteDeleteHandler(noteStore))
+	admin.POST("/notes", noteCreateHandler(noteStore))
+	admin.DELETE("/notes/:id", noteDeleteHandler(noteStore))
 	router.GET("/api/open-source-tools", openSourceToolsHandler(pool, false))
-	router.GET("/api/admin/open-source-tools", openSourceToolsHandler(pool, true))
-	router.POST("/api/admin/open-source-tools/metadata", openSourceToolMetadataHandler(githubClient))
-	router.POST("/api/admin/open-source-tools", openSourceToolCreateHandler(githubClient, pool))
-	router.PATCH("/api/admin/open-source-tools/:id/visibility", openSourceToolVisibilityHandler(pool))
+	admin.GET("/open-source-tools", openSourceToolsHandler(pool, true))
+	admin.POST("/open-source-tools/metadata", openSourceToolMetadataHandler(githubClient))
+	admin.POST("/open-source-tools", openSourceToolCreateHandler(githubClient, pool))
+	admin.PATCH("/open-source-tools/:id/visibility", openSourceToolVisibilityHandler(pool))
 	guestbookStore := guestbookMessageStore{pool: pool}
 	router.GET("/api/guestbook/messages", guestbookMessagesHandler(guestbookStore))
 	router.POST("/api/guestbook/messages", guestbookMessageCreateHandler(guestbookStore))
-	router.DELETE("/api/admin/guestbook/messages/:id", guestbookMessageDeleteHandler(guestbookStore))
+	admin.DELETE("/guestbook/messages/:id", guestbookMessageDeleteHandler(guestbookStore))
 
 	server := &http.Server{
 		Addr:              ":" + port,

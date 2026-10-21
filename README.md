@@ -18,7 +18,7 @@ NextAlex Blog 是一个个人博客与创作展示站点，前台用于展示技
    docker compose up --build -d
    ```
 
-3. 打开 `http://localhost:5173`。
+3. 打开 `http://localhost:5173`；管理端地址为 `http://localhost:5173/admin`，开发环境默认账号和密码均为 `alexlee`。
 
 默认情况下，前端源码目录会挂载到容器内，Vite 使用轮询触发 HMR；前端容器会把 `/api` 请求代理到 Compose 内的后端服务。前端、后端和 PostgreSQL 分别暴露在宿主机 `5173`、`8090` 和 `55432` 端口。
 
@@ -26,7 +26,7 @@ NextAlex Blog 是一个个人博客与创作展示站点，前台用于展示技
 
 生产部署使用三个镜像：`nextalexblog-postgres`（包含初始化 SQL）、`nextalexblog-backend` 和 `nextalexblog-frontend`。前端镜像由 Nginx 提供静态资源，并在容器网络内把 `/api` 反向代理到后端；生产环境仅暴露前端端口，数据库和后端不直接对公网开放。
 
-图库图片存储在阿里云 OSS，不使用 MinIO，也不存入 PostgreSQL。部署前将 `.env.production.example` 复制为 `.env.production`，填入镜像仓库、强密码，以及实际需要的 OSS、SMTP、Steam 配置。
+图库图片存储在阿里云 OSS，不使用 MinIO，也不存入 PostgreSQL。部署前将 `.env.production.example` 复制为 `.env.production`，填入镜像仓库、数据库强密码、管理端会话密钥和 `DEEPSEEK_API_KEY`，以及实际需要的 OSS、SMTP、Steam 配置。管理端账号和密码默认均为 `alexlee`，生产部署建议通过 `ADMIN_USERNAME` 和 `ADMIN_PASSWORD` 覆盖默认值。
 
 构建并推送镜像：
 
@@ -47,7 +47,9 @@ docker compose --env-file .env.production -f docker-compose.production.yml up -d
 项目当前包括：
 
 - 首页：个人介绍、3D 小地球模型、横向滚动叙事、文章入口和全局鼠标尾迹。
+- 管理后台：访问 `/admin` 时需要登录，登录状态由后端签发的 HttpOnly Cookie 维护，退出后立即失效。
 - 文章：内容、分类、标签和发布状态持久化在 PostgreSQL；后台支持草稿、发布、编辑和删除，前台支持分类/专栏筛选、浏览量和轻量点赞。
+- 文章智能助手：从文章列表右侧栏进入全站文章知识库；回答只检索已发布文章并通过 DeepSeek 流式返回，附带可跳转的引用来源。
 - 笔记：支持从后台发布 Markdown 笔记、列出已发布笔记并删除，前台以自适应卡片展示。
 - 创作图库：图片上传到阿里云 OSS，元数据写入 PostgreSQL，后台可预览、编辑和删除。
 - 创作中心：展示 GitHub 快照数据、贡献热力图和项目状态。
@@ -78,8 +80,13 @@ docker compose --env-file .env.production -f docker-compose.production.yml up -d
 - `POST /api/guestbook/messages`：提交留言。
 - `GET /api/github/profile`、`GET /api/github/repositories`、`GET /api/github/contributions`：读取 GitHub 快照。
 - `GET /api/steam/overview`：读取 Steam 快照。
+- `POST /api/assistant`：基于所有已发布文章检索上下文，并以 SSE 流式返回文章助手回答和引用来源。
+- `POST /api/articles/:id/assistant`：保留为兼容接口，会优先检索指定的已发布文章。
+- `POST /api/admin/login`：校验管理端账号和密码，并设置 HttpOnly 会话 Cookie。
+- `GET /api/admin/session`：检查当前管理端会话。
+- `POST /api/admin/logout`：退出管理端并清除会话 Cookie。
 
-后台接口集中在 `/api/admin/*`，包括 `GET/POST/PUT/DELETE /api/admin/articles`、`POST/DELETE /api/admin/notes`、图库管理、音乐导入、GitHub/Steam 刷新、开源工具管理和留言删除。
+后台接口集中在 `/api/admin/*`，包括 `GET/POST/PUT/DELETE /api/admin/articles`、`POST/DELETE /api/admin/notes`、图库管理、音乐导入、GitHub/Steam 刷新、开源工具管理和留言删除。除登录、会话检查和退出接口外，所有管理业务接口都必须通过后端签发的 HttpOnly 会话 Cookie 认证。
 
 ## 环境变量
 
@@ -87,10 +94,15 @@ docker compose --env-file .env.production -f docker-compose.production.yml up -d
 
 - `DATABASE_URL`：Go 后端连接 PostgreSQL 的地址。
 - `POSTGRES_PORT`：本地 PostgreSQL 映射端口，默认 `55432`。
+- `ADMIN_USERNAME`、`ADMIN_PASSWORD`：管理端登录凭据，默认均为 `alexlee`；生产环境建议覆盖。
+- `ADMIN_SESSION_SECRET`：管理端会话签名密钥；生产 Compose 要求显式配置为足够长的随机值。
+- `ADMIN_COOKIE_SECURE`：是否仅通过 HTTPS 发送管理端 Cookie；开发环境默认 `false`，生产环境默认 `true`。
 - `GITHUB_USERNAME`：GitHub 快照刷新使用的公开用户名。
 - `STEAM_ID`、`STEAM_WEB_API_KEY`：Steam 快照刷新配置。
 - `OSS_ENDPOINT`、`OSS_BUCKET`、`OSS_ACCESS_KEY_ID`、`OSS_ACCESS_KEY_SECRET`、`OSS_PUBLIC_BASE_URL`：图库 OSS 存储配置。
-- `SMTP_HOST`、`SMTP_PORT`、`SMTP_USERNAME`、`SMTP_PASSWORD`、`SMTP_FROM`、`SMTP_TO`：留言邮件通知配置。
+- `SMTP_HOST`、`SMTP_PORT`、`SMTP_USERNAME`、`SMTP_PASSWORD`、`NOTIFICATION_TO_EMAIL`：留言邮件通知配置；发件人使用 `SMTP_USERNAME`。
+- `DEEPSEEK_API_KEY`：文章智能助手调用 DeepSeek 所需的服务端密钥；不要放入前端代码或提交到 Git。
+- `DEEPSEEK_BASE_URL`、`DEEPSEEK_MODEL`、`DEEPSEEK_TIMEOUT_SECONDS`、`DEEPSEEK_MAX_OUTPUT_TOKENS`：可选的 DeepSeek 接口地址、模型、超时和输出上限；默认分别为 `https://api.deepseek.com`、`deepseek-v4-pro`、`45` 秒和 `1200`。
 
 ## 数据库说明
 

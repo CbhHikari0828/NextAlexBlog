@@ -24,6 +24,10 @@ services:
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER:-blog}:${POSTGRES_PASSWORD:-blog_dev_password}@postgres:5432/${POSTGRES_DB:-blog}?sslmode=disable
       BACKEND_PORT: "8090"
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-alexlee}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-alexlee}
+      ADMIN_SESSION_SECRET: ${ADMIN_SESSION_SECRET:-}
+      ADMIN_COOKIE_SECURE: ${ADMIN_COOKIE_SECURE:-false}
       GITHUB_USERNAME: ${GITHUB_USERNAME:-CbhHikari0828}
       STEAM_ID: ${STEAM_ID:-}
       STEAM_WEB_API_KEY: ${STEAM_WEB_API_KEY:-}
@@ -40,6 +44,11 @@ services:
       SMTP_USERNAME: ${SMTP_USERNAME:-}
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
       NOTIFICATION_TO_EMAIL: ${NOTIFICATION_TO_EMAIL:-}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-https://api.deepseek.com}
+      DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-v4-pro}
+      DEEPSEEK_TIMEOUT_SECONDS: ${DEEPSEEK_TIMEOUT_SECONDS:-45}
+      DEEPSEEK_MAX_OUTPUT_TOKENS: ${DEEPSEEK_MAX_OUTPUT_TOKENS:-1200}
     depends_on:
       postgres:
         condition: service_healthy
